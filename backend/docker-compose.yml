@@ -1,0 +1,11 @@
+# docker-compose.yml
+version: '3'
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: fantasy
+      POSTGRES_PASSWORD: draft123
+      POSTGRES_DB: fantasy-draft
+    ports:
+      - 5432:5432
