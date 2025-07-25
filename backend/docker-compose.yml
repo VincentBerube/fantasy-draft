@@ -1,11 +1,21 @@
-# docker-compose.yml
-version: '3'
+version: '3.8'
 services:
   db:
     image: postgres:15
+    container_name: fantasy-db
     environment:
       POSTGRES_USER: fantasy
       POSTGRES_PASSWORD: draft123
       POSTGRES_DB: fantasy-draft
     ports:
-      - 5432:5432
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fantasy"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

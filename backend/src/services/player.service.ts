@@ -1,8 +1,10 @@
-import { Player } from '../models/player.model';
+// src/services/player.service.ts
+import { Player, PrismaClient } from '@prisma/client';
 import { parsePlayerData } from '../data/excel-parser';
-import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  log: ['query', 'info', 'warn', 'error'],
+});
 
 export class PlayerService {
   async importFromExcel(filePath: string) {
@@ -10,7 +12,12 @@ export class PlayerService {
     
     for (const player of players) {
       await prisma.player.upsert({
-        where: { name: player.name },
+        where: {
+          name_position: {
+            name: player.name,
+            position: player.position
+          }
+        },
         update: player,
         create: player
       });
