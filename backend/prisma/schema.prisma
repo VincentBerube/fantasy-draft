@@ -11,7 +11,7 @@ model Player {
   id                String   @id @default(uuid())
   name              String
   position          String
-  team              String?  // Make all fields optional
+  team              String?  // Ensure this has ? for nullable
   rank              Int?
   positionalRank    String?
   adp               Float?
@@ -19,8 +19,8 @@ model Player {
   projectedPoints   Float?
   lastSeasonPoints  Float?
   byeWeek           Int?
-  userNotes         String[]
-  customTags        String[]
+  userNotes         String[] @default([])
+  customTags        String[] @default([])
   
-    @@unique([name, position])
+  @@unique([name, position])
 }
