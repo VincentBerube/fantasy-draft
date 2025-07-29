@@ -1,6 +1,17 @@
-// src/data/excel-parser.ts
-import { Player } from '../models/player.model';
 import * as XLSX from 'xlsx';
+import { Player } from '@prisma/client';
+
+// Helper function to safely parse values
+const safeNumber = (value: any): number | null => {
+  if (value === undefined || value === null) return null;
+  const num = Number(value);
+  return isNaN(num) ? null : num;
+};
+
+const safeString = (value: any): string | null => {
+  if (value === undefined || value === null) return null;
+  return String(value).trim() || null;
+};
 
 export function parsePlayerData(filePath: string): Omit<Player, 'id'>[] {
   const workbook = XLSX.readFile(filePath);
@@ -9,35 +20,34 @@ export function parsePlayerData(filePath: string): Omit<Player, 'id'>[] {
   
   const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet);
   
-  return jsonData.map((p: any) => {
-    // Safely extract position
+  return jsonData.map((row: any) => {
+    // Map column names based on your example format
+    const playerName = safeString(row['PLAYER'] || row['OVERALL PLAYER'] || row['Player Name']);
+    const positionRank = safeString(row['POS RK'] || row['Position Rank']);
+    const byeWeek = safeNumber(row['BYE'] || row['Bye Week']);
+    const projectedPoints = safeNumber(row['FPS'] || row['Projected Points'] || row['FPTS']);
+    const vorp = safeNumber(row['VORP'] || row['Value Over Replacement']);
+    
+    // Extract position from POS RK (e.g., "RB1" → "RB")
     let position = 'UNK';
-    if (p['POS RK']) {
-      const positionMatch = p['POS RK'].toString().match(/^([A-Z]+)/);
-      if (positionMatch) position = positionMatch[1];
+    if (positionRank) {
+      const positionMatch = positionRank.match(/^([A-Za-z]+)/);
+      if (positionMatch) position = positionMatch[1].toUpperCase();
     }
-    
-    // Helper function to safely parse values
-    const safeNumber = (value: any): number | null => {
-      if (value === undefined || value === null) return null;
-      const num = Number(value);
-      return isNaN(num) ? null : num;
-    };
-    
-    // Return with all fields matching Player type
+
     return {
-      name: p.PLAYER || p.NAME || p.Player || 'Unknown Player',
+      name: playerName || 'Unknown Player',
       position,
-      team: p.TEAM || null,
-      rank: safeNumber(p.RK),
-      positionalRank: p['POS RK'] || null,
-      adp: safeNumber(p.ADP),
-      vorp: safeNumber(p.VORP),
-      projectedPoints: safeNumber(p.FPS),
-      lastSeasonPoints: safeNumber(p['LAST SEASON']),
-      byeWeek: safeNumber(p.BYE),
+      team: null, // Not in your example file
+      rank: safeNumber(row['RK'] || row['Rank']),
+      positionalRank: positionRank,
+      adp: null, // Not in your example file
+      vorp: vorp,
+      projectedPoints: projectedPoints,
+      lastSeasonPoints: null, // Not in your example file
+      byeWeek: byeWeek,
       userNotes: [],
       customTags: []
-    } as Omit<Player, 'id'>;
+    } as unknown as Omit<Player, 'id'>;
   });
 }

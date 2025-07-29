@@ -3,7 +3,8 @@ import { playerApi } from '../api/playerApi';
 
 export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<{text: string, isError: boolean} | null>(null);
+  const [importResult, setImportResult] = useState<{newCount?: number, updatedCount?: number} | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -11,14 +12,36 @@ export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void
     if (!file) return;
     
     setIsLoading(true);
-    setMessage('');
+    setMessage(null);
+    setImportResult(null);
     
     try {
       const response = await playerApi.importPlayers(file);
-      setMessage(response.data.message);
+      
+      // Success response
+      setMessage({
+        text: response.data.message,
+        isError: false
+      });
+      
+      // Store detailed results
+      setImportResult({
+        newCount: response.data.newCount,
+        updatedCount: response.data.updatedCount
+      });
+      
+      // Refresh player list
       if (onImportSuccess) onImportSuccess();
     } catch (error: any) {
-      setMessage(error.response?.data?.error || 'Import failed');
+      // Error response
+      const errorMessage = error.response?.data?.error || 
+                           error.response?.data?.details || 
+                           'Import failed';
+      
+      setMessage({
+        text: errorMessage,
+        isError: true
+      });
     } finally {
       setIsLoading(false);
     }
@@ -63,12 +86,15 @@ export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void
       </form>
       
       {message && (
-        <div className={`mt-4 p-3 rounded text-center ${
-          message.includes('Imported') 
-            ? 'bg-green-100 text-green-700' 
-            : 'bg-red-100 text-red-700'
-        }`}>
-          {message}
+        <div className={`mt-4 p-3 rounded ${message.isError ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+          {message.text}
+          
+          {!message.isError && importResult && (
+            <div className="mt-2 pt-2 border-t border-gray-200">
+              <p className="text-sm"><span className="font-medium">New players:</span> {importResult.newCount}</p>
+              <p className="text-sm"><span className="font-medium">Updated players:</span> {importResult.updatedCount}</p>
+            </div>
+          )}
         </div>
       )}
     </div>
