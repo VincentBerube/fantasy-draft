@@ -1,3 +1,4 @@
+// frontend/src/components/PlayerList.tsx
 import { useState, useEffect } from 'react';
 import { playerApi } from '../api/playerApi';
 import { PlayerDetail } from './PlayerDetail';
@@ -28,20 +29,78 @@ export function PlayerList() {
 
   const handleExport = async () => {
     setIsExporting(true);
+    setError('');
     try {
+      console.log('Starting export process');
       const response = await playerApi.exportPlayers();
+      console.log('Received export response');
+      
+      // Create a Blob from the response data
+      const blob = new Blob([response.data], { 
+        type: response.headers['content-type'] || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      });
       
       // Create download link
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', 'players_export.xlsx');
       document.body.appendChild(link);
       link.click();
-      link.parentNode?.removeChild(link);
-    } catch (error) {
+      
+      // Clean up
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(link);
+        console.log('Export completed successfully');
+      }, 100);
+    } catch (error: any) {
       console.error('Export failed:', error);
-      alert('Export failed. Check console for details.');
+      let errorMessage = 'Export failed';
+      
+      // Handle different types of errors
+      if (error.response) {
+        console.log('Error response status:', error.response.status);
+        console.log('Error response headers:', error.response.headers);
+        
+        if (error.response.data instanceof Blob) {
+          // Read blob as text for error messages
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const errorText = reader.result as string;
+              console.log('Error response text:', errorText);
+              
+              try {
+                const errorJson = JSON.parse(errorText);
+                errorMessage = errorJson.error || errorJson.message || 'Export failed';
+                if (errorJson.details) errorMessage += `: ${errorJson.details}`;
+              } catch (e) {
+                errorMessage = `Server error: ${errorText}`;
+              }
+            } catch (e) {
+              errorMessage = 'Error parsing server response';
+            }
+            setError(errorMessage);
+          };
+          reader.readAsText(error.response.data);
+          return;
+        } else if (typeof error.response.data === 'string') {
+          errorMessage = error.response.data;
+        } else if (error.response.data && typeof error.response.data === 'object') {
+          errorMessage = error.response.data.error || error.response.data.message || 'Export failed';
+        }
+      } else if (error.request) {
+        // The request was made but no response was received
+        console.error('No response received:', error.request);
+        errorMessage = 'No response from server';
+      } else {
+        // Something happened in setting up the request
+        console.error('Request setup error:', error.message);
+        errorMessage = error.message || 'Request setup failed';
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsExporting(false);
     }
@@ -55,16 +114,14 @@ export function PlayerList() {
     );
   }
 
-  if (error) {
-    return (
-      <div className="bg-red-100 text-red-700 p-4 rounded text-center">
-        {error}
-      </div>
-    );
-  }
-
   return (
     <div className="mt-6 overflow-x-auto">
+      {error && (
+        <div className="bg-red-100 text-red-700 p-4 rounded text-center mb-4">
+          {error}
+        </div>
+      )}
+      
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-lg font-semibold">Player List</h2>
         <button

@@ -1,6 +1,8 @@
+// backend/src/routes/players.route.ts
 import { Router } from 'express';
 import multer from 'multer';
 import { PlayerService } from '../services/player.service';
+import * as XLSX from 'xlsx';
 
 const router = Router();
 const upload = multer({ dest: 'uploads/' });
@@ -28,6 +30,29 @@ router.post('/import', upload.single('file'), async (req: MulterRequest, res) =>
     res.status(500).json({ 
       success: false,
       error: 'Import failed',
+      details: error.message 
+    });
+  }
+});
+
+// Export players to Excel - MUST COME BEFORE DYNAMIC ROUTES
+router.get('/export', async (req, res) => {
+  console.log('Export endpoint called');
+  try {
+    const buffer = await playerService.exportPlayers();
+    
+    // Set headers
+    res.setHeader('Content-Disposition', 'attachment; filename=players_export.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    
+    // Send buffer directly
+    res.send(buffer);
+  } catch (error: any) {
+    console.error('Export failed:', error);
+    
+    // Return JSON error
+    res.status(500).json({ 
+      error: 'Export failed', 
       details: error.message 
     });
   }
@@ -91,24 +116,6 @@ router.patch('/:id/tags', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ 
       error: 'Failed to update tags', 
-      details: error.message 
-    });
-  }
-});
-
-// Export players to Excel
-router.get('/export', async (req, res) => {
-  try {
-    const buffer = await playerService.exportPlayers();
-    
-    // Set headers
-    res.setHeader('Content-Disposition', 'attachment; filename=players_export.xlsx');
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.send(buffer);
-  } catch (error: any) {
-    console.error('Export failed:', error);
-    res.status(500).json({ 
-      error: 'Export failed', 
       details: error.message 
     });
   }

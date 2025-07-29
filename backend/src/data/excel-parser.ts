@@ -7,9 +7,9 @@ const safeNumber = (value: any): number | null => {
   return isNaN(num) ? null : num;
 };
 
-const safeString = (value: any): string | null => {
-  if (value === undefined || value === null) return null;
-  return String(value).trim() || null;
+const safeString = (value: any): string => {
+  if (value === undefined || value === null) return '';
+  return String(value).trim();
 };
 
 export function parsePlayerData(filePath: string): Omit<Player, 'id'>[] {
@@ -35,20 +35,21 @@ export function parsePlayerData(filePath: string): Omit<Player, 'id'>[] {
         if (positionMatch) position = positionMatch[1].toUpperCase();
       }
 
+      // Ensure all fields match Player type requirements
       return {
         name: playerName || 'Unknown Player',
         position,
-        team: null, // Not in your example file
+        team: safeString(row['TEAM'] || row['Team']),
         rank: safeNumber(row['RK'] || row['Rank']),
         positionalRank: positionRank,
-        adp: null, // Not in your example file
+        adp: safeNumber(row['ADP'] || row['Average Draft Position']),
         vorp: vorp,
         projectedPoints: projectedPoints,
-        lastSeasonPoints: null, // Not in your example file
+        lastSeasonPoints: safeNumber(row['LAST SEASON'] || row['Previous Season Points']),
         byeWeek: byeWeek,
         userNotes: [],
         customTags: []
-      } as unknown as Omit<Player, 'id'>;
+      } as Omit<Player, 'id'>;
     });
   } catch (error) {
     console.error('Excel parsing failed:', error);

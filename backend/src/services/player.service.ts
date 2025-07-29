@@ -103,32 +103,50 @@ export class PlayerService {
   }
 
   async exportPlayers() {
-    const players = await prisma.player.findMany({
-      select: {
-        id: true,
-        name: true,
-        position: true,
-        team: true,
-        rank: true,
-        positionalRank: true,
-        adp: true,
-        vorp: true,
-        projectedPoints: true,
-        lastSeasonPoints: true,
-        byeWeek: true,
-        userNotes: true,
-        customTags: true
-      }
-    });
+    console.log('Exporting players data - START');
+    try {
+      const players = await prisma.player.findMany({
+        select: {
+          id: true,
+          name: true,
+          position: true,
+          team: true,
+          rank: true,
+          positionalRank: true,
+          adp: true,
+          vorp: true,
+          projectedPoints: true,
+          lastSeasonPoints: true,
+          byeWeek: true,
+          userNotes: true,
+          customTags: true
+        }
+      });
 
-    // Create worksheet
-    const ws = XLSX.utils.json_to_sheet(players);
-    
-    // Create workbook
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Players");
-    
-    // Generate buffer
-    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      console.log(`Found ${players.length} players for export`);
+      
+      if (players.length === 0) {
+        console.warn('No players found for export');
+        throw new Error('No players found in database');
+      }
+      
+      // Create worksheet
+      const ws = XLSX.utils.json_to_sheet(players);
+      
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Players");
+      
+      // Generate buffer
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      console.log(`Generated Excel file - Size: ${buffer.length} bytes`);
+      
+      return buffer;
+    } catch (error) {
+      console.error('Error generating Excel file:', error);
+      throw new Error('Failed to generate Excel file');
+    } finally {
+      console.log('Exporting players data - END');
+    }
   }
 }

@@ -31,7 +31,7 @@ export const playerApi = {
 
   exportPlayers: () => {
     return api.get('/players/export', {
-      responseType: 'blob', // Important for file download
+      responseType: 'blob',
     });
   }
 };
