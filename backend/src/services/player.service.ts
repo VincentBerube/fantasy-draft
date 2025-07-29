@@ -1,5 +1,6 @@
 import { Player, PrismaClient } from '@prisma/client';
 import { parsePlayerData } from '../data/excel-parser';
+import * as XLSX from 'xlsx';
 
 const prisma = new PrismaClient({
   log: ['warn', 'error'],
@@ -10,90 +11,83 @@ export class PlayerService {
     const players = parsePlayerData(filePath);
     let newCount = 0;
     let updatedCount = 0;
-    let skippedCount = 0;
-    
-    console.log(`Starting import of ${players.length} players from ${filePath}`);
-    
-    // Batch processing for better performance
-    const batchSize = 50;
-    for (let i = 0; i < players.length; i += batchSize) {
-      const batch = players.slice(i, i + batchSize);
-      const batchResults = await Promise.allSettled(
-        batch.map(player => this.processPlayer(player))
-      );
+    let errorCount = 0;
+    const errors: string[] = [];
 
-      batchResults.forEach(result => {
-        if (result.status === 'fulfilled') {
-          if (result.value === 'created') newCount++;
-          if (result.value === 'updated') updatedCount++;
-        } else {
-          skippedCount++;
-          console.error('Player processing failed:', result.reason);
+    console.log(`Starting import of ${players.length} players`);
+
+    for (const [index, player] of players.entries()) {
+      try {
+        if (!player.name || !player.position) {
+          errors.push(`Row ${index + 2}: Missing name or position`);
+          errorCount++;
+          continue;
         }
-      });
-      
-      console.log(`Processed ${Math.min(i + batchSize, players.length)}/${players.length} players`);
+
+        const existing = await prisma.player.findUnique({
+          where: { name_position: { name: player.name, position: player.position } }
+        });
+
+        if (existing) {
+          await prisma.player.update({
+            where: { id: existing.id },
+            data: {
+              rank: player.rank ?? existing.rank,
+              positionalRank: player.positionalRank || existing.positionalRank,
+              vorp: player.vorp ?? existing.vorp,
+              projectedPoints: player.projectedPoints ?? existing.projectedPoints,
+              byeWeek: player.byeWeek ?? existing.byeWeek,
+              // Preserve existing custom data
+              userNotes: existing.userNotes,
+              customTags: existing.customTags
+            }
+          });
+          updatedCount++;
+        } else {
+          await prisma.player.create({ 
+            data: {
+              ...player,
+              // Initialize with empty arrays
+              userNotes: [],
+              customTags: []
+            }
+          });
+          newCount++;
+        }
+
+        // Log progress every 50 players
+        if ((index + 1) % 50 === 0) {
+          console.log(`Processed ${index + 1}/${players.length} players`);
+        }
+      } catch (error: any) {
+        errorCount++;
+        errors.push(`Row ${index + 2}: ${error.message || 'Unknown error'}`);
+        console.error(`Error processing ${player.name}:`, error);
+      }
     }
-    
-    console.log(`Import completed: ${newCount} new, ${updatedCount} updated, ${skippedCount} failed`);
-    return { 
+
+    console.log(`Import completed: ${newCount} new, ${updatedCount} updated, ${errorCount} errors`);
+    return {
       total: players.length,
       newCount,
       updatedCount,
-      skippedCount
+      errorCount,
+      errors
     };
   }
 
-  private async processPlayer(player: Omit<Player, 'id'>): Promise<'created' | 'updated'> {
-    try {
-      // Find existing player
-      const existing = await prisma.player.findUnique({
-        where: { 
-          name_position: {
-            name: player.name,
-            position: player.position
-          }
-        }
-      });
-
-      if (existing) {
-        // Merge data - preserve existing notes/tags
-        await prisma.player.update({
-          where: { id: existing.id },
-          data: {
-            // Update stats but preserve custom data
-            team: player.team || existing.team,
-            rank: player.rank ?? existing.rank,
-            adp: player.adp ?? existing.adp,
-            vorp: player.vorp ?? existing.vorp,
-            projectedPoints: player.projectedPoints ?? existing.projectedPoints,
-            lastSeasonPoints: player.lastSeasonPoints ?? existing.lastSeasonPoints,
-            byeWeek: player.byeWeek ?? existing.byeWeek,
-            positionalRank: player.positionalRank || existing.positionalRank,
-            // Preserve existing notes/tags
-            userNotes: existing.userNotes,
-            customTags: existing.customTags
-          }
-        });
-        return 'updated';
-      } else {
-        // Create new player with empty notes/tags
-        await prisma.player.create({ 
-          data: {
-            ...player,
-            userNotes: [],
-            customTags: []
-          }
-        });
-        return 'created';
-      }
-    } catch (error) {
-      console.error(`Error processing ${player.name}:`, error);
-      throw error;
-    }
+  async getPlayers(scoring: 'PPR' | 'Standard' = 'PPR') {
+    return prisma.player.findMany({
+      orderBy: scoring === 'PPR' ? { rank: 'asc' } : { adp: 'asc' }
+    });
   }
-  
-  // Add to PlayerService class
+
+  async getPlayerById(id: string) {
+    return prisma.player.findUnique({
+      where: { id }
+    });
+  }
+
   async updatePlayerNotes(playerId: string, notes: string[]) {
     return prisma.player.update({
       where: { id: playerId },
@@ -107,10 +101,34 @@ export class PlayerService {
       data: { customTags: tags }
     });
   }
-  
-  async getPlayers(scoring: 'PPR' | 'Standard' = 'PPR') {
-    return prisma.player.findMany({
-      orderBy: scoring === 'PPR' ? { rank: 'asc' } : { adp: 'asc' }
+
+  async exportPlayers() {
+    const players = await prisma.player.findMany({
+      select: {
+        id: true,
+        name: true,
+        position: true,
+        team: true,
+        rank: true,
+        positionalRank: true,
+        adp: true,
+        vorp: true,
+        projectedPoints: true,
+        lastSeasonPoints: true,
+        byeWeek: true,
+        userNotes: true,
+        customTags: true
+      }
     });
+
+    // Create worksheet
+    const ws = XLSX.utils.json_to_sheet(players);
+    
+    // Create workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Players");
+    
+    // Generate buffer
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   }
 }

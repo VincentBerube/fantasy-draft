@@ -15,5 +15,23 @@ export const playerApi = {
   
   getPlayers: (scoring?: 'PPR' | 'Standard') => {
     return api.get('/players', { params: { scoring } });
+  },
+
+  getPlayer: (id: string) => {
+    return api.get(`/players/${id}`);
+  },
+
+  updatePlayerNotes: (id: string, notes: string[]) => {
+    return api.patch(`/players/${id}/notes`, { notes });
+  },
+
+  updatePlayerTags: (id: string, tags: string[]) => {
+    return api.patch(`/players/${id}/tags`, { tags });
+  },
+
+  exportPlayers: () => {
+    return api.get('/players/export', {
+      responseType: 'blob', // Important for file download
+    });
   }
 };

@@ -48,6 +48,22 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get a single player by ID
+router.get('/:id', async (req, res) => {
+  try {
+    const player = await playerService.getPlayerById(req.params.id);
+    if (!player) {
+      return res.status(404).json({ error: 'Player not found' });
+    }
+    res.json(player);
+  } catch (error: any) {
+    res.status(500).json({ 
+      error: 'Failed to fetch player', 
+      details: error.message 
+    });
+  }
+});
+
 // Update player notes
 router.patch('/:id/notes', async (req, res) => {
   try {
@@ -75,6 +91,24 @@ router.patch('/:id/tags', async (req, res) => {
   } catch (error: any) {
     res.status(500).json({ 
       error: 'Failed to update tags', 
+      details: error.message 
+    });
+  }
+});
+
+// Export players to Excel
+router.get('/export', async (req, res) => {
+  try {
+    const buffer = await playerService.exportPlayers();
+    
+    // Set headers
+    res.setHeader('Content-Disposition', 'attachment; filename=players_export.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+  } catch (error: any) {
+    console.error('Export failed:', error);
+    res.status(500).json({ 
+      error: 'Export failed', 
       details: error.message 
     });
   }
