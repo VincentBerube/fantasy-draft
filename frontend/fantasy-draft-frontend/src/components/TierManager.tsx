@@ -1,6 +1,6 @@
 // frontend/src/components/TierManager.tsx
 import { useState } from 'react';
-import { playerApi, Tier } from '../api/playerApi';
+import { playerApi, type Tier } from '../api/playerApi';
 
 interface TierManagerProps {
   tiers: Tier[];

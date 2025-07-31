@@ -1,6 +1,6 @@
 // frontend/src/components/PlayerList.tsx
 import { useState, useEffect } from 'react';
-import { playerApi, Player, Tag, Tier } from '../api/playerApi';
+import { playerApi, type Player, type Tag, type Tier } from '../api/playerApi';
 import { PlayerDetail } from './PlayerDetail';
 import { TagManager } from './TagManager';
 import { TierManager } from './TierManager';

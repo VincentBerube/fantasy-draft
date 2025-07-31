@@ -1,6 +1,6 @@
 // frontend/src/components/TagManager.tsx
 import { useState } from 'react';
-import { playerApi, Tag, Player } from '../api/playerApi';
+import { playerApi, type Tag, type Player } from '../api/playerApi';
 
 interface TagManagerProps {
   tags: Tag[];
@@ -159,118 +159,7 @@ export function TagManager({ tags, players, onClose, onUpdate }: TagManagerProps
             
             {/* Left Column: Tag Management */}
             <div>
-              <h3 className="text-lg font-semibold mb-4">Bulk Tag Assignment</h3>
-              
-              {/* Tag Selection */}
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Select Tag</label>
-                <select
-                  value={selectedTag}
-                  onChange={(e) => setSelectedTag(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Choose a tag...</option>
-                  {tags.map(tag => (
-                    <option key={tag.id} value={tag.id}>{tag.name}</option>
-                  ))}
-                </select>
-              </div>
-              
-              {/* Player Selection Controls */}
-              <div className="flex gap-2 mb-4">
-                <button
-                  onClick={selectAllPlayers}
-                  className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300"
-                >
-                  Select All
-                </button>
-                <button
-                  onClick={clearSelection}
-                  className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300"
-                >
-                  Clear Selection
-                </button>
-                <span className="text-sm text-gray-600 self-center">
-                  {selectedPlayers.size} players selected
-                </span>
-              </div>
-              
-              {/* Bulk Actions */}
-              {selectedTag && selectedPlayers.size > 0 && (
-                <div className="flex gap-2 mb-4">
-                  <button
-                    onClick={handleBulkAddTag}
-                    disabled={isLoading}
-                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400"
-                  >
-                    Add Tag to Selected
-                  </button>
-                  <button
-                    onClick={handleBulkRemoveTag}
-                    disabled={isLoading}
-                    className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400"
-                  >
-                    Remove Tag from Selected
-                  </button>
-                </div>
-              )}
-              
-              {/* Player List */}
-              <div className="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto">
-                <h4 className="font-medium mb-3">Players ({players.length})</h4>
-                <div className="space-y-2">
-                  {players.map(player => (
-                    <div key={player.id} className="flex items-center justify-between p-2 bg-white rounded border">
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedPlayers.has(player.id)}
-                          onChange={() => togglePlayerSelection(player.id)}
-                          className="rounded"
-                        />
-                        <div>
-                          <div className="font-medium text-sm">{player.name}</div>
-                          <div className="text-xs text-gray-500">
-                            {player.position} - {player.team || 'No Team'}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Current Tags */}
-                      <div className="flex gap-1">
-                        {player.playerTags.map(({ tag }) => (
-                          <span
-                            key={tag.id}
-                            className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white"
-                            style={{ backgroundColor: tag.color }}
-                          >
-                            {tag.name}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        {/* Footer */}
-        <div className="border-t p-4 bg-gray-50">
-          <div className="flex justify-end">
-            <button
-              onClick={onClose}
-              className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}ibold mb-4">Manage Tags</h3>
+              <h3 className="text-lg font-semibold mb-4">Manage Tags</h3>
               
               {/* Create New Tag */}
               <div className="bg-gray-50 p-4 rounded-lg mb-6">
@@ -388,4 +277,115 @@ export function TagManager({ tags, players, onClose, onUpdate }: TagManagerProps
 
             {/* Right Column: Bulk Tag Assignment */}
             <div>
-              <h3 className="text-lg font-sem
+              <h3 className="text-lg font-semibold mb-4">Bulk Tag Assignment</h3>
+              
+              {/* Tag Selection */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Select Tag</label>
+                <select
+                  value={selectedTag}
+                  onChange={(e) => setSelectedTag(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Choose a tag...</option>
+                  {tags.map(tag => (
+                    <option key={tag.id} value={tag.id}>{tag.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Player Selection Controls */}
+              <div className="flex gap-2 mb-4">
+                <button
+                  onClick={selectAllPlayers}
+                  className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300"
+                >
+                  Select All
+                </button>
+                <button
+                  onClick={clearSelection}
+                  className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300"
+                >
+                  Clear Selection
+                </button>
+                <span className="text-sm text-gray-600 self-center">
+                  {selectedPlayers.size} players selected
+                </span>
+              </div>
+              
+              {/* Bulk Actions */}
+              {selectedTag && selectedPlayers.size > 0 && (
+                <div className="flex gap-2 mb-4">
+                  <button
+                    onClick={handleBulkAddTag}
+                    disabled={isLoading}
+                    className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400"
+                  >
+                    Add Tag to Selected
+                  </button>
+                  <button
+                    onClick={handleBulkRemoveTag}
+                    disabled={isLoading}
+                    className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400"
+                  >
+                    Remove Tag from Selected
+                  </button>
+                </div>
+              )}
+              
+              {/* Player List */}
+              <div className="bg-gray-50 rounded-lg p-4 max-h-96 overflow-y-auto">
+                <h4 className="font-medium mb-3">Players ({players.length})</h4>
+                <div className="space-y-2">
+                  {players.map(player => (
+                    <div key={player.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedPlayers.has(player.id)}
+                          onChange={() => togglePlayerSelection(player.id)}
+                          className="rounded"
+                        />
+                        <div>
+                          <div className="font-medium text-sm">{player.name}</div>
+                          <div className="text-xs text-gray-500">
+                            {player.position} - {player.team || 'No Team'}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Current Tags */}
+                      <div className="flex gap-1">
+                        {player.playerTags.map(({ tag }) => (
+                          <span
+                            key={tag.id}
+                            className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white"
+                            style={{ backgroundColor: tag.color }}
+                          >
+                            {tag.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {/* Footer */}
+        <div className="border-t p-4 bg-gray-50">
+          <div className="flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
