@@ -21,12 +21,13 @@ model Player {
   byeWeek           Int?
   userNotes         String[]    @default([])
   customTags        String[]    @default([])
-  tier              String?     // References Tier.id
+  tierId            String?
   isDrafted         Boolean     @default(false)
-  customRank        Int?        // User-defined ranking
-  aliases           String[]    @default([]) // Alternative names for duplicate detection
+  customRank        Int?
+  aliases           String[]    @default([])
   
   // Relations
+  tier              Tier?       @relation(fields: [tierId], references: [id])
   playerTags        PlayerTag[]
   notes             Note[]
   
@@ -74,6 +75,9 @@ model Tier {
   color     String   @default("#8B5CF6")
   order     Int
   createdAt DateTime @default(now())
+  
+  // Relations
+  players   Player[]
   
   @@index([order])
 }

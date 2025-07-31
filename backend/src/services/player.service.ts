@@ -1,6 +1,5 @@
 import { Player, PrismaClient, Tag, Note, Tier } from '@prisma/client';
 import { parsePlayerData } from '../data/excel-parser';
-import * as XLSX from 'xlsx';
 import * as ExcelJS from 'exceljs';
 import { removeUndefined } from '../utils/object.utils';
 
@@ -12,6 +11,7 @@ const prisma = new PrismaClient({
 type PlayerWithRelations = Player & {
   playerTags: Array<{ tag: Tag }>;
   notes: Note[];
+  tier?: Tier | null;
 };
 
 export class PlayerService {
@@ -21,7 +21,7 @@ export class PlayerService {
     const s2 = str2.toLowerCase().replace(/[^a-z0-9]/g, '');
     
     // Calculate Levenshtein distance
-    const matrix = Array(s1.length + 1).fill().map(() => Array(s2.length + 1).fill(0));
+    const matrix = Array(s1.length + 1).fill(null).map(() => Array(s2.length + 1).fill(0));
     
     for (let i = 0; i <= s1.length; i++) matrix[i][0] = i;
     for (let j = 0; j <= s2.length; j++) matrix[0][j] = j;
@@ -172,7 +172,8 @@ export class PlayerService {
             tag: true
           }
         },
-        notes: true
+        notes: true,
+        tier: true
       },
       orderBy: [
         { customRank: 'asc' },
@@ -192,7 +193,8 @@ export class PlayerService {
             tag: true
           }
         },
-        notes: true
+        notes: true,
+        tier: true
       }
     });
   }
@@ -207,7 +209,8 @@ export class PlayerService {
             tag: true
           }
         },
-        notes: true
+        notes: true,
+        tier: true
       }
     });
   }
@@ -228,7 +231,8 @@ export class PlayerService {
             tag: true
           }
         },
-        notes: true
+        notes: true,
+        tier: true
       }
     });
   }
@@ -243,7 +247,8 @@ export class PlayerService {
             tag: true
           }
         },
-        notes: true
+        notes: true,
+        tier: true
       }
     });
   }
@@ -329,8 +334,8 @@ export class PlayerService {
   async deleteTier(id: string) {
     // Remove tier from all players first
     await prisma.player.updateMany({
-      where: { tier: id },
-      data: { tier: null }
+      where: { tierId: id },
+      data: { tierId: null }
     });
     
     return prisma.tier.delete({
@@ -341,7 +346,16 @@ export class PlayerService {
   async assignPlayerToTier(playerId: string, tierId: string | null) {
     return prisma.player.update({
       where: { id: playerId },
-      data: { tier: tierId }
+      data: { tierId: tierId },
+      include: {
+        playerTags: {
+          include: {
+            tag: true
+          }
+        },
+        notes: true,
+        tier: true
+      }
     });
   }
 
@@ -410,7 +424,7 @@ export class PlayerService {
     };
 
     players.forEach(player => {
-      const tier = player.tier ? tierMap.get(player.tier) : null;
+      const tier = player.tierId ? tierMap.get(player.tierId) : null;
       const tags = player.playerTags.map(pt => pt.tag.name).join('; ');
       const notes = player.notes.map(note => note.content).join('; ');
       
