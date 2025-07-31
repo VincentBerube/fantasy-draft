@@ -8,10 +8,10 @@ datasource db {
 }
 
 model Player {
-  id                String   @id @default(uuid())
+  id                String      @id @default(uuid())
   name              String
   position          String
-  team              String?  // Ensure this has ? for nullable
+  team              String?
   rank              Int?
   positionalRank    String?
   adp               Float?
@@ -19,8 +19,61 @@ model Player {
   projectedPoints   Float?
   lastSeasonPoints  Float?
   byeWeek           Int?
-  userNotes         String[] @default([])
-  customTags        String[] @default([])
+  userNotes         String[]    @default([])
+  customTags        String[]    @default([])
+  tier              String?     // References Tier.id
+  isDrafted         Boolean     @default(false)
+  customRank        Int?        // User-defined ranking
+  aliases           String[]    @default([]) // Alternative names for duplicate detection
+  
+  // Relations
+  playerTags        PlayerTag[]
+  notes             Note[]
   
   @@unique([name, position])
+}
+
+model Tag {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  color       String      @default("#3B82F6")
+  createdAt   DateTime    @default(now())
+  
+  // Relations
+  playerTags  PlayerTag[]
+}
+
+model PlayerTag {
+  id        String   @id @default(uuid())
+  playerId  String
+  tagId     String
+  createdAt DateTime @default(now())
+  
+  // Relations
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  
+  @@unique([playerId, tagId])
+}
+
+model Note {
+  id        String   @id @default(uuid())
+  playerId  String
+  content   String
+  color     String   @default("#6B7280")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
+model Tier {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  color     String   @default("#8B5CF6")
+  order     Int
+  createdAt DateTime @default(now())
+  
+  @@index([order])
 }

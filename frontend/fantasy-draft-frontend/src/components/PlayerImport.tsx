@@ -5,9 +5,11 @@ interface ImportResult {
   total: number;
   newCount: number;
   updatedCount: number;
+  duplicateCount?: number;
   mergedCount?: number;
   errorCount: number;
   errors: string[];
+  duplicateWarnings?: string[];
 }
 
 export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void }) {
@@ -152,7 +154,7 @@ export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void
                 </label>
               </div>
               <p className="mt-2 text-xs text-gray-600">
-                Note: User notes and custom tags are always preserved regardless of merge strategy.
+                Note: User notes, custom tags, tiers, and draft status are always preserved regardless of merge strategy.
               </p>
             </div>
           )}
@@ -189,31 +191,61 @@ export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void
           </p>
           
           {!message.isError && importResult && (
-            <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-              <div className="bg-white p-3 rounded border">
-                <div className="font-medium text-gray-900">📊 Summary</div>
-                <div className="text-gray-600 mt-1">
-                  <div>Total processed: <span className="font-medium">{importResult.total}</span></div>
-                  <div>New players: <span className="font-medium text-green-600">{importResult.newCount}</span></div>
-                  <div>Updated: <span className="font-medium text-blue-600">{importResult.updatedCount}</span></div>
-                  {importResult.mergedCount !== undefined && (
-                    <div>Merged: <span className="font-medium text-purple-600">{importResult.mergedCount}</span></div>
-                  )}
-                  {importResult.errorCount > 0 && (
-                    <div>Errors: <span className="font-medium text-red-600">{importResult.errorCount}</span></div>
-                  )}
+            <div className="mt-4 space-y-4">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="bg-white p-3 rounded border">
+                  <div className="font-medium text-gray-900">📊 Total</div>
+                  <div className="text-2xl font-bold text-gray-800">{importResult.total}</div>
+                  <div className="text-xs text-gray-600">processed</div>
                 </div>
+                
+                <div className="bg-white p-3 rounded border">
+                  <div className="font-medium text-green-900">✨ New</div>
+                  <div className="text-2xl font-bold text-green-600">{importResult.newCount}</div>
+                  <div className="text-xs text-gray-600">players added</div>
+                </div>
+
+                <div className="bg-white p-3 rounded border">
+                  <div className="font-medium text-blue-900">🔄 Updated</div>
+                  <div className="text-2xl font-bold text-blue-600">{importResult.updatedCount}</div>
+                  <div className="text-xs text-gray-600">players updated</div>
+                </div>
+
+                {importResult.duplicateCount !== undefined && importResult.duplicateCount > 0 && (
+                  <div className="bg-white p-3 rounded border">
+                    <div className="font-medium text-orange-900">🔗 Duplicates</div>
+                    <div className="text-2xl font-bold text-orange-600">{importResult.duplicateCount}</div>
+                    <div className="text-xs text-gray-600">handled</div>
+                  </div>
+                )}
               </div>
-              
+
+              {/* Duplicate Warnings */}
+              {importResult.duplicateWarnings && importResult.duplicateWarnings.length > 0 && (
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                  <div className="font-medium text-orange-800 mb-2">🔗 Duplicate Detection</div>
+                  <div className="text-sm text-orange-700 space-y-1 max-h-32 overflow-y-auto">
+                    {importResult.duplicateWarnings.map((warning, index) => (
+                      <div key={index}>• {warning}</div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-orange-600 mt-2">
+                    These players were detected as potential duplicates and merged automatically.
+                  </div>
+                </div>
+              )}
+
+              {/* Errors */}
               {importResult.errorCount > 0 && (
-                <div className="bg-red-50 p-3 rounded border border-red-200">
-                  <div className="font-medium text-red-800">⚠️ Errors</div>
-                  <div className="text-red-700 text-xs mt-1 max-h-20 overflow-y-auto">
-                    {importResult.errors.slice(0, 3).map((error, index) => (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <div className="font-medium text-red-800 mb-2">⚠️ Import Errors ({importResult.errorCount})</div>
+                  <div className="text-sm text-red-700 space-y-1 max-h-32 overflow-y-auto">
+                    {importResult.errors.slice(0, 5).map((error, index) => (
                       <div key={index}>• {error}</div>
                     ))}
-                    {importResult.errors.length > 3 && (
-                      <div>• ... and {importResult.errors.length - 3} more</div>
+                    {importResult.errors.length > 5 && (
+                      <div>• ... and {importResult.errors.length - 5} more errors</div>
                     )}
                   </div>
                 </div>
@@ -229,8 +261,9 @@ export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void
         <ul className="text-sm text-blue-800 space-y-1">
           <li>• Expected columns: RK, OVERALL PLAYER, POS, POS RK, BYE, FPS, VORP, TEAM, ADP</li>
           <li>• Player name and position are required for each row</li>
-          <li>• Duplicate players (same name + position) will be updated with new data</li>
-          <li>• Your custom notes and tags are always preserved during imports</li>
+          <li>• <strong>New:</strong> Automatic duplicate detection using fuzzy matching</li>
+          <li>• Similar player names (e.g., "Josh Allen" vs "J. Allen") are merged automatically</li>
+          <li>• Your custom notes, tags, tiers, and draft status are always preserved</li>
           <li>• Use "Update Mode" for refreshing rankings, "Preserve Mode" for adding new data only</li>
         </ul>
       </div>
