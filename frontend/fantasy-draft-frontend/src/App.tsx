@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import './index.css';
 import { PlayerImport } from './components/PlayerImport';
-import { PlayerList } from './components/PlayerList';
+import { PlayerList } from './components/PlayerList/';
 
 function App() {
   const [refreshKey, setRefreshKey] = useState(0);

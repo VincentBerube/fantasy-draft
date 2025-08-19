@@ -489,4 +489,95 @@ export class PlayerService {
     // Enhanced version of the import method with duplicate detection
     return this.importFromExcel(filePath);
   }
+  // Add these methods to your existing PlayerService class in player.service.ts
+
+// Bulk tag operations
+async bulkAddTagToPlayers(playerIds: string[], tagId: string) {
+  const operations = playerIds.map(playerId => ({
+    playerId,
+    tagId
+  }));
+  
+  // Use createMany with skipDuplicates to avoid errors on existing tags
+  const result = await prisma.playerTag.createMany({
+    data: operations,
+    skipDuplicates: true
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Added tag to ${result.count} players`
+  };
+}
+
+async bulkRemoveTagFromPlayers(playerIds: string[], tagId: string) {
+  const result = await prisma.playerTag.deleteMany({
+    where: {
+      playerId: { in: playerIds },
+      tagId: tagId
+    }
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Removed tag from ${result.count} players`
+  };
+}
+
+// Bulk tier assignment
+async bulkAssignTier(playerIds: string[], tierId: string | null) {
+  const result = await prisma.player.updateMany({
+    where: {
+      id: { in: playerIds }
+    },
+    data: {
+      tierId: tierId
+    }
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Updated tier for ${result.count} players`
+  };
+}
+
+// Bulk draft status
+async bulkToggleDraftStatus(playerIds: string[], isDrafted: boolean) {
+  const result = await prisma.player.updateMany({
+    where: {
+      id: { in: playerIds }
+    },
+    data: {
+      isDrafted: isDrafted
+    }
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Updated draft status for ${result.count} players`
+  };
+}
+
+// Generic bulk update
+async bulkUpdatePlayers(playerIds: string[], updates: Partial<Player>) {
+  // Remove any fields that shouldn't be bulk updated
+  const { id, playerTags, notes, tier, ...safeUpdates } = updates as any;
+  
+  const result = await prisma.player.updateMany({
+    where: {
+      id: { in: playerIds }
+    },
+    data: safeUpdates
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Updated ${result.count} players`
+  };
+}
 }
