@@ -140,7 +140,7 @@ export function PlayerRow({
 
       <td className="px-3 py-4 whitespace-nowrap">
         <select
-          value={player.tier || ''}
+          value={player.tierId || ''}
           onChange={(e) => onAssignTier(player.id, e.target.value || null)}
           className="text-xs p-1 border rounded focus:ring-2 focus:ring-blue-500"
         >

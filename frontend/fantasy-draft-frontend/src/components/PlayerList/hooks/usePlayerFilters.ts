@@ -31,7 +31,7 @@ export function usePlayerFilters(players: Player[]) {
     }
 
     if (tierFilter !== 'ALL') {
-      filtered = filtered.filter(player => player.tier === tierFilter);
+      filtered = filtered.filter(player => player.tierId === tierFilter);
     }
 
     if (tagFilter !== 'ALL') {

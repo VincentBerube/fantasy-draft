@@ -38,6 +38,7 @@ export function PlayerList() {
     try {
       setIsLoading(true);
       const response = await playerApi.getPlayers('PPR', !hideDrafted);
+      console.log('Players data:', response.data[0]); // Check the structure
       setPlayers(response.data);
       setError('');
     } catch (err) {
@@ -110,7 +111,7 @@ export function PlayerList() {
     try {
       await playerApi.assignPlayerToTier(playerId, tierId);
       setPlayers(prev => prev.map(p => 
-        p.id === playerId ? { ...p, tier: tierId || undefined } : p
+        p.id === playerId ? { ...p, tierId: tierId || undefined } : p
       ));
     } catch (error) {
       console.error('Failed to assign tier:', error);
@@ -158,7 +159,7 @@ export function PlayerList() {
     const grouped = new Map<string, typeof filteredPlayers>();
     
     filteredPlayers.forEach(player => {
-      const tierKey = player.tier || 'no-tier';
+      const tierKey = player.tierId || 'no-tier';
       if (!grouped.has(tierKey)) {
         grouped.set(tierKey, []);
       }

@@ -41,7 +41,8 @@ export interface Player {
   vorp?: number;
   adp?: number;
   byeWeek?: number;
-  tier?: string;
+  tierId?: string;  // The foreign key field
+  tier?: Tier;      // The included relation object
   isDrafted: boolean;
   aliases: string[];
   userNotes: string[];
@@ -49,7 +50,6 @@ export interface Player {
   playerTags: Array<{ tag: Tag }>;
   notes: Note[];
 }
-
 export const playerApi = {
   // Player CRUD operations
   importPlayers: (file: File, mergeStrategy: 'update' | 'preserve' = 'update') => {
