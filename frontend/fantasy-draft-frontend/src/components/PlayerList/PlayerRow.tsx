@@ -44,9 +44,12 @@ export function PlayerRow({
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={() => handleCellEdit(field, value)}
-          onKeyPress={(e) => {
+          onKeyDown={(e) => {
             if (e.key === 'Enter') {
               handleCellEdit(field, value);
+            } else if (e.key === 'Escape') {
+              setEditingCell(null);
+              setEditValue('');
             }
           }}
           className="w-full px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500"
@@ -73,15 +76,17 @@ export function PlayerRow({
     <tr className={`hover:bg-gray-50 transition-colors ${
       player.isDrafted ? 'bg-gray-100 opacity-75' : ''
     }`}>
+      {/* Drafted checkbox */}
       <td className="px-3 py-4 whitespace-nowrap">
         <input
           type="checkbox"
           checked={player.isDrafted}
           onChange={(e) => onToggleDrafted(player.id, e.target.checked)}
-          className="rounded"
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
       </td>
 
+      {/* Rank - editable */}
       <td className="px-3 py-4 whitespace-nowrap">
         <div className="flex items-center space-x-2">
           <div className="text-sm font-bold text-gray-900">
@@ -95,6 +100,7 @@ export function PlayerRow({
         </div>
       </td>
 
+      {/* Player name */}
       <td className="px-3 py-4 whitespace-nowrap">
         <div
           onClick={() => onShowDetail(player.id)}
@@ -109,6 +115,7 @@ export function PlayerRow({
         </div>
       </td>
 
+      {/* Position */}
       <td className="px-3 py-4 whitespace-nowrap">
         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
           player.position === 'QB' ? 'bg-red-100 text-red-800' :
@@ -122,75 +129,91 @@ export function PlayerRow({
         </span>
       </td>
 
-      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-        {renderEditableCell('team', player.team)}
+      {/* Team */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
+        {player.team}
       </td>
 
-      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-        {renderEditableCell('byeWeek', player.byeWeek)}
+      {/* Bye Week */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
+        {player.byeWeek}
       </td>
 
-      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+      {/* Projected Points - editable */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm">
         {renderEditableCell('projectedPoints', player.projectedPoints)}
       </td>
 
-      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+      {/* VORP - editable */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm">
         {renderEditableCell('vorp', player.vorp)}
       </td>
 
-      <td className="px-3 py-4 whitespace-nowrap">
+      {/* Tier dropdown */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm">
         <select
           value={player.tierId || ''}
           onChange={(e) => onAssignTier(player.id, e.target.value || null)}
-          className="text-xs p-1 border rounded focus:ring-2 focus:ring-blue-500"
+          className="text-xs border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
         >
           <option value="">No Tier</option>
           {tiers.map(tier => (
-            <option key={tier.id} value={tier.id}>{tier.name}</option>
+            <option key={tier.id} value={tier.id}>
+              {tier.name}
+            </option>
           ))}
         </select>
       </td>
 
+      {/* Tags */}
       <td className="px-3 py-4 whitespace-nowrap">
         <div className="flex flex-wrap gap-1">
-          {player.playerTags.map(({ tag }) => (
+          {player.playerTags.map(pt => (
             <span
-              key={tag.id}
-              className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white"
-              style={{ backgroundColor: tag.color }}
+              key={pt.tag.id}
+              className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
+              style={{
+                backgroundColor: pt.tag.color + '20',
+                color: pt.tag.color,
+                borderColor: pt.tag.color,
+                borderWidth: '1px'
+              }}
             >
-              {tag.name}
+              {pt.tag.name}
             </span>
           ))}
         </div>
       </td>
 
-      <td className="px-3 py-4 whitespace-nowrap">
+      {/* Notes */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm">
         <button
           onClick={() => onShowNotes(player.id)}
-          className={`flex items-center space-x-1 px-2 py-1 rounded text-xs ${
-            player.notes.length > 0 
-              ? 'bg-blue-100 text-blue-800 hover:bg-blue-200' 
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
+          className="text-blue-600 hover:text-blue-900"
+          title={player.notes.length > 0 ? `${player.notes.length} note(s)` : 'Add notes'}
         >
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-          </svg>
-          <span>{player.notes.length}</span>
+          {player.notes.length > 0 ? '📝' : '➕'}
         </button>
       </td>
 
+      {/* Actions */}
       <td className="px-3 py-4 whitespace-nowrap text-sm font-medium">
-        <button
-          onClick={() => onDelete(player.id)}
-          className="text-red-600 hover:text-red-900 ml-2"
-          title="Delete player"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </button>
+        <div className="flex space-x-2">
+          <button
+            onClick={() => onShowDetail(player.id)}
+            className="text-blue-600 hover:text-blue-900"
+            title="View details"
+          >
+            👁️
+          </button>
+          <button
+            onClick={() => onDelete(player.id)}
+            className="text-red-600 hover:text-red-900"
+            title="Delete player"
+          >
+            🗑️
+          </button>
+        </div>
       </td>
     </tr>
   );

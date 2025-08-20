@@ -1,5 +1,5 @@
 // src/components/PlayerList/index.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { playerApi, type Player, type Tag, type Tier } from '../../api/playerApi';
 import { PlayerDetail } from '../PlayerDetail';
 import { TagManager } from '../TagManager';
@@ -8,6 +8,24 @@ import { NoteManager } from '../NoteManager';
 import { PlayerFilters } from './PlayerFilters';
 import { PlayerTable } from './PlayerTable';
 import { usePlayerFilters } from './hooks/usePlayerFilters';
+
+// Debounce utility for performance
+function useDebounce<T extends (...args: any[]) => any>(
+  callback: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  const timeoutRef = useRef<number | undefined>(undefined);
+  
+  return useCallback((...args: Parameters<T>) => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    
+    timeoutRef.current = window.setTimeout(() => {
+      callback(...args);
+    }, delay);
+  }, [callback, delay]);
+}
 
 export function PlayerList() {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -22,6 +40,9 @@ export function PlayerList() {
   const [showTagManager, setShowTagManager] = useState(false);
   const [showTierManager, setShowTierManager] = useState(false);
   const [showNoteManager, setShowNoteManager] = useState<string | null>(null);
+  
+  // Track pending updates for better UX
+  const [pendingUpdates, setPendingUpdates] = useState<Set<string>>(new Set());
 
   const filterProps = usePlayerFilters(players);
   const { filteredPlayers, hideDrafted, setHideDrafted } = filterProps;
@@ -38,7 +59,6 @@ export function PlayerList() {
     try {
       setIsLoading(true);
       const response = await playerApi.getPlayers('PPR', !hideDrafted);
-      console.log('Players data:', response.data[0]); // Check the structure
       setPlayers(response.data);
       setError('');
     } catch (err) {
@@ -67,21 +87,57 @@ export function PlayerList() {
     }
   };
 
-  const handleCellEdit = async (playerId: string, field: string, value: any) => {
+  // Optimistic update for immediate UI feedback
+  const updatePlayerOptimistically = useCallback((playerId: string, field: string, value: any) => {
+    setPlayers(prev => prev.map(p => 
+      p.id === playerId ? { ...p, [field]: value } : p
+    ));
+    
+    // Track as pending
+    setPendingUpdates(prev => new Set(prev).add(`${playerId}-${field}`));
+  }, []);
+
+  // Actual API call with error handling
+  const performPlayerUpdate = useCallback(async (playerId: string, field: string, value: any) => {
     try {
       const updateData: any = {};
       updateData[field] = value;
       
       await playerApi.updatePlayer(playerId, updateData);
       
-      setPlayers(prev => prev.map(p => 
-        p.id === playerId ? { ...p, [field]: value } : p
-      ));
+      // Remove from pending on success
+      setPendingUpdates(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(`${playerId}-${field}`);
+        return newSet;
+      });
+      
+      setError('');
     } catch (error) {
       console.error('Failed to update player:', error);
       setError('Failed to update player');
+      
+      // Revert optimistic update on error
+      fetchPlayers();
+      
+      setPendingUpdates(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(`${playerId}-${field}`);
+        return newSet;
+      });
     }
-  };
+  }, []);
+
+  // Debounced version - reduces API calls
+  const debouncedUpdate = useDebounce(performPlayerUpdate, 500);
+
+  const handleCellEdit = useCallback((playerId: string, field: string, value: any) => {
+    // Immediate UI update for responsiveness
+    updatePlayerOptimistically(playerId, field, value);
+    
+    // Debounced API call to reduce server load
+    debouncedUpdate(playerId, field, value);
+  }, [updatePlayerOptimistically, debouncedUpdate]);
 
   const handleDeletePlayer = async (playerId: string) => {
     if (!confirm('Are you sure you want to delete this player?')) return;
@@ -97,67 +153,72 @@ export function PlayerList() {
 
   const handleToggleDrafted = async (playerId: string, isDrafted: boolean) => {
     try {
-      await playerApi.toggleDraftStatus(playerId, isDrafted);
+      // Optimistic update
       setPlayers(prev => prev.map(p => 
         p.id === playerId ? { ...p, isDrafted } : p
       ));
+      
+      await playerApi.toggleDraftStatus(playerId, isDrafted);
     } catch (error) {
-      console.error('Failed to update draft status:', error);
+      console.error('Failed to toggle draft status:', error);
       setError('Failed to update draft status');
+      
+      // Revert on error
+      setPlayers(prev => prev.map(p => 
+        p.id === playerId ? { ...p, isDrafted: !isDrafted } : p
+      ));
     }
   };
 
   const handleAssignTier = async (playerId: string, tierId: string | null) => {
     try {
-      await playerApi.assignPlayerToTier(playerId, tierId);
+      // Optimistic update - use correct field name
       setPlayers(prev => prev.map(p => 
         p.id === playerId ? { ...p, tierId: tierId || undefined } : p
       ));
+      
+      await playerApi.assignPlayerToTier(playerId, tierId);
     } catch (error) {
       console.error('Failed to assign tier:', error);
       setError('Failed to assign tier');
+      
+      // Revert on error
+      fetchPlayers();
     }
   };
 
   const handleExport = async () => {
-    setIsExporting(true);
-    setError('');
     try {
+      setIsExporting(true);
       const response = await playerApi.exportPlayers();
-      const blob = new Blob([response.data], { 
-        type: response.headers['content-type'] || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      });
+      const blob = response.data;
       
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-      link.setAttribute('download', `fantasy_players_${timestamp}.xlsx`);
-      
-      document.body.appendChild(link);
-      link.click();
-      
-      setTimeout(() => {
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(link);
-      }, 100);
-    } catch (error: any) {
-      console.error('Export failed:', error);
-      setError('Export failed');
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = 'fantasy-players.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('Failed to export players:', error);
+      setError('Failed to export players');
     } finally {
       setIsExporting(false);
     }
   };
 
-  const getTierInfo = (tierId: string | undefined) => {
+  const getTierInfo = (tierId: string | undefined): Tier | null => {
     if (!tierId) return null;
-    return tiers.find(t => t.id === tierId);
+    return tiers.find(t => t.id === tierId) || null;
   };
 
   const groupPlayersByTier = () => {
-    const grouped = new Map<string, typeof filteredPlayers>();
+    const grouped = new Map<string, Player[]>();
     
+    // Use tierId for grouping (the foreign key field)
     filteredPlayers.forEach(player => {
       const tierKey = player.tierId || 'no-tier';
       if (!grouped.has(tierKey)) {
@@ -188,6 +249,7 @@ export function PlayerList() {
   }
 
   const tierGroups = groupPlayersByTier();
+  const draftedCount = players.filter(p => p.isDrafted).length;
 
   return (
     <div className="mt-8">
@@ -196,50 +258,41 @@ export function PlayerList() {
           {error}
         </div>
       )}
-      
-      {/* Header with Controls */}
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-800">
-          Player Database ({filteredPlayers.length} players)
+
+      {/* Show pending updates indicator */}
+      {pendingUpdates.size > 0 && (
+        <div className="bg-blue-100 text-blue-700 p-2 rounded-lg text-center mb-4 border border-blue-200">
+          💾 Saving {pendingUpdates.size} update(s)...
+        </div>
+      )}
+
+      {/* Header controls */}
+      <div className="mb-6 flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-gray-900">
+          Fantasy Draft Players ({filteredPlayers.length})
         </h2>
-        <div className="flex gap-3">
+        
+        <div className="flex space-x-3">
           <button
             onClick={() => setShowTagManager(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
             Manage Tags
           </button>
+          
           <button
             onClick={() => setShowTierManager(true)}
             className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
           >
             Manage Tiers
           </button>
+          
           <button
             onClick={handleExport}
-            disabled={isExporting || players.length === 0}
-            className={`flex items-center px-6 py-2 rounded-lg font-medium transition-all ${
-              isExporting || players.length === 0
-                ? 'bg-gray-400 cursor-not-allowed text-gray-600' 
-                : 'bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg'
-            }`}
+            disabled={isExporting}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
           >
-            {isExporting ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Exporting...
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Export to Excel
-              </>
-            )}
+            {isExporting ? 'Exporting...' : 'Export to Excel'}
           </button>
         </div>
       </div>
@@ -249,13 +302,13 @@ export function PlayerList() {
         {...filterProps}
         tags={tags}
         tiers={tiers}
-        draftedCount={players.filter(p => p.isDrafted).length}
+        draftedCount={draftedCount}
       />
 
-      {/* Player Tables Grouped by Tier */}
+      {/* Player Tables - uses existing PlayerTable component */}
       <div className="space-y-8">
         {tierGroups.map(([tierKey, tierPlayers]) => {
-          const tierInfo = tierKey === 'no-tier' ? null : getTierInfo(tierKey);
+          const tierInfo = getTierInfo(tierKey === 'no-tier' ? undefined : tierKey);
           
           return (
             <PlayerTable
@@ -274,32 +327,14 @@ export function PlayerList() {
         })}
       </div>
 
-      {filteredPlayers.length === 0 && !isLoading && (
-        <div className="text-center py-12 text-gray-500">
-          {players.length === 0 ? (
-            <div>
-              <div className="text-4xl mb-4">📊</div>
-              <h3 className="text-lg font-medium mb-2">No players found</h3>
-              <p>Import an Excel file to get started with your fantasy draft analysis.</p>
-            </div>
-          ) : (
-            <div>
-              <div className="text-4xl mb-4">🔍</div>
-              <h3 className="text-lg font-medium mb-2">No players match your filters</h3>
-              <p>Try adjusting your search terms or filters.</p>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Modals */}
       {selectedPlayerId && (
-        <PlayerDetail
+        <PlayerDetail 
           playerId={selectedPlayerId}
           onClose={() => setSelectedPlayerId(null)}
         />
       )}
-
+      
       {showTagManager && (
         <TagManager
           tags={tags}
@@ -311,7 +346,7 @@ export function PlayerList() {
           }}
         />
       )}
-
+      
       {showTierManager && (
         <TierManager
           tiers={tiers}
@@ -322,12 +357,12 @@ export function PlayerList() {
           }}
         />
       )}
-
+      
       {showNoteManager && (
         <NoteManager
           playerId={showNoteManager}
           onClose={() => setShowNoteManager(null)}
-          onUpdate={() => fetchPlayers()}
+          onUpdate={fetchPlayers}
         />
       )}
     </div>
