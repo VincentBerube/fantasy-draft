@@ -3,7 +3,7 @@ import type { Player, Tier } from '../../api/playerApi';
 import { PlayerRow } from './PlayerRow';
 
 interface PlayerTableProps {
-  tierInfo: Tier | null;
+  tierInfo: Tier | null | undefined;
   players: Player[];
   tiers: Tier[];
   onToggleDrafted: (id: string, isDrafted: boolean) => void;
