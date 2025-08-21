@@ -2,12 +2,14 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { PlayerService } from '../services/player.service';
+import { PrismaClient } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import * as fs from 'fs';
 
 const router = Router();
 const upload = multer({ dest: 'uploads/' });
 const playerService = new PlayerService();
+const prisma = new PrismaClient();
 
 interface MulterRequest extends Express.Request {
   [x: string]: any;
@@ -95,6 +97,41 @@ router.get('/', async (req, res) => {
   }
 });
 
+// FAST UPDATE endpoint for inline editing (no joins) - MUST COME BEFORE /:id route
+router.patch('/:id/quick', async (req, res) => {
+  console.log('Fast update called for player:', req.params.id, 'with data:', req.body);
+  try {
+    // Simple update without expensive joins for better performance
+    const player = await prisma.player.update({
+      where: { id: req.params.id },
+      data: req.body,
+      select: {
+        id: true,
+        name: true,
+        position: true,
+        customRank: true,
+        projectedPoints: true,
+        vorp: true,
+        adp: true,
+        rank: true,
+        team: true,
+        byeWeek: true,
+        tierId: true,
+        isDrafted: true,
+      }
+    });
+    
+    console.log('Fast update successful:', player);
+    res.json(player);
+  } catch (error: any) {
+    console.error('Fast update failed:', error);
+    res.status(500).json({ 
+      error: 'Failed to update player', 
+      details: error.message 
+    });
+  }
+});
+
 // Get a single player by ID
 router.get('/:id', async (req, res) => {
   try {
@@ -111,7 +148,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Update player (for inline editing)
+// Update player (for complex updates that need relations)
 router.patch('/:id', async (req, res) => {
   try {
     const player = await playerService.updatePlayer(req.params.id, req.body);
@@ -173,48 +210,7 @@ router.patch('/:id/draft', async (req, res) => {
   }
 });
 
-// Legacy endpoints for backward compatibility
-router.patch('/:id/notes', async (req, res) => {
-  try {
-    if (!Array.isArray(req.body.notes)) {
-      return res.status(400).json({ error: 'Notes must be an array of strings' });
-    }
-    
-    const player = await playerService.updatePlayerNotes(
-      req.params.id,
-      req.body.notes
-    );
-    res.json(player);
-  } catch (error: any) {
-    res.status(500).json({ 
-      error: 'Failed to update notes', 
-      details: error.message 
-    });
-  }
-});
-
-router.patch('/:id/tags', async (req, res) => {
-  try {
-    if (!Array.isArray(req.body.tags)) {
-      return res.status(400).json({ error: 'Tags must be an array of strings' });
-    }
-    
-    const player = await playerService.updatePlayerTags(
-      req.params.id,
-      req.body.tags
-    );
-    res.json(player);
-  } catch (error: any) {
-    res.status(500).json({ 
-      error: 'Failed to update tags', 
-      details: error.message 
-    });
-  }
-});
-
-// TAG MANAGEMENT ROUTES
-
-// Get all tags
+// Tag management endpoints
 router.get('/tags/all', async (req, res) => {
   try {
     const tags = await playerService.getTags();
@@ -227,7 +223,6 @@ router.get('/tags/all', async (req, res) => {
   }
 });
 
-// Create new tag
 router.post('/tags', async (req, res) => {
   try {
     const { name, color } = req.body;
@@ -245,7 +240,6 @@ router.post('/tags', async (req, res) => {
   }
 });
 
-// Update tag
 router.patch('/tags/:tagId', async (req, res) => {
   try {
     const { name, color } = req.body;
@@ -259,7 +253,6 @@ router.patch('/tags/:tagId', async (req, res) => {
   }
 });
 
-// Delete tag
 router.delete('/tags/:tagId', async (req, res) => {
   try {
     await playerService.deleteTag(req.params.tagId);
@@ -272,11 +265,11 @@ router.delete('/tags/:tagId', async (req, res) => {
   }
 });
 
-// Add tag to player
-router.post('/:id/tags/:tagId', async (req, res) => {
+// Player-Tag association endpoints
+router.post('/:playerId/tags/:tagId', async (req, res) => {
   try {
-    await playerService.addTagToPlayer(req.params.id, req.params.tagId);
-    const player = await playerService.getPlayerById(req.params.id);
+    await playerService.addTagToPlayer(req.params.playerId, req.params.tagId);
+    const player = await playerService.getPlayerById(req.params.playerId);
     res.json(player);
   } catch (error: any) {
     res.status(500).json({ 
@@ -286,11 +279,10 @@ router.post('/:id/tags/:tagId', async (req, res) => {
   }
 });
 
-// Remove tag from player
-router.delete('/:id/tags/:tagId', async (req, res) => {
+router.delete('/:playerId/tags/:tagId', async (req, res) => {
   try {
-    await playerService.removeTagFromPlayer(req.params.id, req.params.tagId);
-    const player = await playerService.getPlayerById(req.params.id);
+    await playerService.removeTagFromPlayer(req.params.playerId, req.params.tagId);
+    const player = await playerService.getPlayerById(req.params.playerId);
     res.json(player);
   } catch (error: any) {
     res.status(500).json({ 
@@ -300,17 +292,15 @@ router.delete('/:id/tags/:tagId', async (req, res) => {
   }
 });
 
-// NOTE MANAGEMENT ROUTES
-
-// Add note to player
-router.post('/:id/notes', async (req, res) => {
+// Note management endpoints
+router.post('/:playerId/notes', async (req, res) => {
   try {
     const { content, color } = req.body;
     if (!content) {
       return res.status(400).json({ error: 'Note content is required' });
     }
     
-    const note = await playerService.addNote(req.params.id, content, color);
+    const note = await playerService.addNote(req.params.playerId, content, color);
     res.json(note);
   } catch (error: any) {
     res.status(500).json({ 
@@ -320,7 +310,6 @@ router.post('/:id/notes', async (req, res) => {
   }
 });
 
-// Update note
 router.patch('/notes/:noteId', async (req, res) => {
   try {
     const { content, color } = req.body;
@@ -334,7 +323,6 @@ router.patch('/notes/:noteId', async (req, res) => {
   }
 });
 
-// Delete note
 router.delete('/notes/:noteId', async (req, res) => {
   try {
     await playerService.deleteNote(req.params.noteId);
@@ -347,9 +335,7 @@ router.delete('/notes/:noteId', async (req, res) => {
   }
 });
 
-// TIER MANAGEMENT ROUTES
-
-// Get all tiers
+// Tier management endpoints
 router.get('/tiers/all', async (req, res) => {
   try {
     const tiers = await playerService.getTiers();
@@ -362,7 +348,6 @@ router.get('/tiers/all', async (req, res) => {
   }
 });
 
-// Create new tier
 router.post('/tiers', async (req, res) => {
   try {
     const { name, color, order } = req.body;
@@ -380,7 +365,6 @@ router.post('/tiers', async (req, res) => {
   }
 });
 
-// Update tier
 router.patch('/tiers/:tierId', async (req, res) => {
   try {
     const { name, color, order } = req.body;
@@ -394,7 +378,6 @@ router.patch('/tiers/:tierId', async (req, res) => {
   }
 });
 
-// Delete tier
 router.delete('/tiers/:tierId', async (req, res) => {
   try {
     await playerService.deleteTier(req.params.tierId);

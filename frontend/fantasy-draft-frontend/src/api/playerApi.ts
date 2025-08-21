@@ -1,3 +1,4 @@
+// frontend/fantasy-draft-frontend/src/api/playerApi.ts
 import axios from 'axios';
 
 const api = axios.create({
@@ -50,6 +51,7 @@ export interface Player {
   playerTags: Array<{ tag: Tag }>;
   notes: Note[];
 }
+
 export const playerApi = {
   // Player CRUD operations
   importPlayers: (file: File, mergeStrategy: 'update' | 'preserve' = 'update') => {
@@ -72,6 +74,12 @@ export const playerApi = {
     return api.get(`/players/${id}`);
   },
 
+  // FAST UPDATE - for simple field changes (no relations loaded)
+  updatePlayerQuick: (id: string, data: Partial<Pick<Player, 'customRank' | 'projectedPoints' | 'vorp' | 'adp' | 'rank'>>) => {
+    return api.patch(`/players/${id}/quick`, data);
+  },
+
+  // FULL UPDATE - for complex updates that need all relations
   updatePlayer: (id: string, data: Partial<Player>) => {
     return api.patch(`/players/${id}`, data);
   },
@@ -162,9 +170,4 @@ export const playerApi = {
   deleteTier: (tierId: string) => {
     return api.delete(`/players/tiers/${tierId}`);
   },
-
-  // Bulk operations (for future use)
-  bulkUpdatePlayers: (playerIds: string[], updates: any) => {
-    return api.patch('/players/bulk/update', { playerIds, updates });
-  }
 };

@@ -1,4 +1,4 @@
-// src/components/PlayerList/index.tsx
+// frontend/fantasy-draft-frontend/src/components/PlayerList/index.tsx
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { playerApi, type Player, type Tag, type Tier } from '../../api/playerApi';
 import { PlayerDetail } from '../PlayerDetail';
@@ -87,23 +87,44 @@ export function PlayerList() {
     }
   };
 
-  // Optimistic update for immediate UI feedback
+  // OPTIMISTIC UPDATE - immediate UI response
   const updatePlayerOptimistically = useCallback((playerId: string, field: string, value: any) => {
+    console.log('🔄 OPTIMISTIC UPDATE:', { playerId, field, value });
+    const startTime = performance.now();
+    
     setPlayers(prev => prev.map(p => 
       p.id === playerId ? { ...p, [field]: value } : p
     ));
     
     // Track as pending
     setPendingUpdates(prev => new Set(prev).add(`${playerId}-${field}`));
+    
+    const endTime = performance.now();
+    console.log(`✅ Optimistic update took ${endTime - startTime}ms`);
   }, []);
 
-  // Actual API call with error handling
+  // ACTUAL API CALL - with error handling and fast endpoint
   const performPlayerUpdate = useCallback(async (playerId: string, field: string, value: any) => {
+    console.log('🚀 STARTING API CALL:', { playerId, field, value });
+    const startTime = performance.now();
+    
     try {
       const updateData: any = {};
       updateData[field] = value;
       
-      await playerApi.updatePlayer(playerId, updateData);
+      // Use fast endpoint for simple field updates (MAJOR PERFORMANCE IMPROVEMENT)
+      const fastUpdateFields = ['customRank', 'projectedPoints', 'vorp', 'adp', 'rank'];
+      
+      if (fastUpdateFields.includes(field)) {
+        console.log('🏃‍♂️ Using FAST endpoint for field:', field);
+        await playerApi.updatePlayerQuick(playerId, updateData);
+      } else {
+        console.log('🐌 Using SLOW endpoint for field:', field);
+        await playerApi.updatePlayer(playerId, updateData);
+      }
+      
+      const endTime = performance.now();
+      console.log(`✅ API call completed in ${endTime - startTime}ms`);
       
       // Remove from pending on success
       setPendingUpdates(prev => {
@@ -114,7 +135,8 @@ export function PlayerList() {
       
       setError('');
     } catch (error) {
-      console.error('Failed to update player:', error);
+      const endTime = performance.now();
+      console.error(`❌ API call failed after ${endTime - startTime}ms:`, error);
       setError('Failed to update player');
       
       // Revert optimistic update on error
@@ -128,15 +150,22 @@ export function PlayerList() {
     }
   }, []);
 
-  // Debounced version - reduces API calls
-  const debouncedUpdate = useDebounce(performPlayerUpdate, 500);
+  // DEBOUNCED VERSION - reduces API calls dramatically
+  const debouncedUpdate = useDebounce(performPlayerUpdate, 500); // 500ms delay
 
+  // OPTIMIZED HANDLE CELL EDIT - this replaces your slow version
   const handleCellEdit = useCallback((playerId: string, field: string, value: any) => {
-    // Immediate UI update for responsiveness
+    console.log('🎯 HANDLE CELL EDIT CALLED:', { playerId, field, value });
+    const startTime = performance.now();
+    
+    // IMMEDIATE UI update for instant feedback (no lag!)
     updatePlayerOptimistically(playerId, field, value);
     
-    // Debounced API call to reduce server load
+    // DEBOUNCED API call to reduce server load (fast endpoint!)
     debouncedUpdate(playerId, field, value);
+    
+    const endTime = performance.now();
+    console.log(`✅ handleCellEdit completed in ${endTime - startTime}ms`);
   }, [updatePlayerOptimistically, debouncedUpdate]);
 
   const handleDeletePlayer = async (playerId: string) => {
@@ -326,6 +355,23 @@ export function PlayerList() {
           );
         })}
       </div>
+
+      {/* Show message when no players match filters */}
+      {filteredPlayers.length === 0 && !isLoading && (
+        <div className="text-center py-12 text-gray-500">
+          {players.length === 0 ? (
+            <div>
+              <p className="text-lg mb-4">No players found</p>
+              <p className="text-sm">Import some players to get started!</p>
+            </div>
+          ) : (
+            <div>
+              <p className="text-lg mb-4">No players match your current filters</p>
+              <p className="text-sm">Try adjusting your search criteria</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modals */}
       {selectedPlayerId && (

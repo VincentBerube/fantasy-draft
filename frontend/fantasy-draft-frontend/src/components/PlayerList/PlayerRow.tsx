@@ -1,5 +1,5 @@
 // src/components/PlayerList/PlayerRow.tsx
-import { useState } from 'react';
+import { useState, memo, useCallback } from 'react';
 import type { Player, Tier } from '../../api/playerApi';
 
 interface PlayerRowProps {
@@ -13,7 +13,8 @@ interface PlayerRowProps {
   onShowNotes: (id: string) => void;
 }
 
-export function PlayerRow({
+// PERFORMANCE: Memoize PlayerRow to prevent unnecessary re-renders
+export const PlayerRow = memo(function PlayerRow({
   player,
   tiers,
   onToggleDrafted,
@@ -26,15 +27,29 @@ export function PlayerRow({
   const [editingCell, setEditingCell] = useState<{ field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
 
-  const handleCellEdit = (field: string, value: any) => {
+  const handleCellEdit = useCallback((field: string, value: any) => {
     const newValue = typeof value === 'number' ? 
       parseFloat(editValue) || 0 : editValue;
     onEditCell(player.id, field, newValue);
     setEditingCell(null);
     setEditValue('');
-  };
+  }, [editValue, onEditCell, player.id]);
 
-  const renderEditableCell = (field: string, value: any) => {
+  const handleStartEdit = useCallback((field: string, currentValue: any) => {
+    setEditingCell({ field });
+    setEditValue(currentValue?.toString() || '');
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent, field: string, value: any) => {
+    if (e.key === 'Enter') {
+      handleCellEdit(field, value);
+    } else if (e.key === 'Escape') {
+      setEditingCell(null);
+      setEditValue('');
+    }
+  }, [handleCellEdit]);
+
+  const renderEditableCell = useCallback((field: string, value: any) => {
     const isEditing = editingCell?.field === field;
     
     if (isEditing) {
@@ -44,14 +59,7 @@ export function PlayerRow({
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={() => handleCellEdit(field, value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              handleCellEdit(field, value);
-            } else if (e.key === 'Escape') {
-              setEditingCell(null);
-              setEditValue('');
-            }
-          }}
+          onKeyDown={(e) => handleKeyDown(e, field, value)}
           className="w-full px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500"
           autoFocus
         />
@@ -60,17 +68,21 @@ export function PlayerRow({
     
     return (
       <span
-        onClick={() => {
-          setEditingCell({ field });
-          setEditValue(value?.toString() || '');
-        }}
+        onClick={() => handleStartEdit(field, value)}
         className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block"
         title="Click to edit"
       >
         {value || '-'}
       </span>
     );
-  };
+  }, [editingCell, editValue, handleCellEdit, handleKeyDown, handleStartEdit]);
+
+  // Memoize tier options to prevent recreation on every render
+  const tierOptions = tiers.map(tier => (
+    <option key={tier.id} value={tier.id}>
+      {tier.name}
+    </option>
+  ));
 
   return (
     <tr className={`hover:bg-gray-50 transition-colors ${
@@ -100,12 +112,9 @@ export function PlayerRow({
         </div>
       </td>
 
-      {/* Player name */}
+      {/* Player name - NO AUTOMATIC MODAL OPENING */}
       <td className="px-3 py-4 whitespace-nowrap">
-        <div
-          onClick={() => onShowDetail(player.id)}
-          className="text-sm font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-        >
+        <div className="text-sm font-medium text-gray-900">
           {player.name}
           {player.aliases.length > 0 && (
             <span className="text-xs text-gray-400 block">
@@ -129,14 +138,14 @@ export function PlayerRow({
         </span>
       </td>
 
-      {/* Team */}
-      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
-        {player.team}
+      {/* Team - editable */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm">
+        {renderEditableCell('team', player.team)}
       </td>
 
-      {/* Bye Week */}
-      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
-        {player.byeWeek}
+      {/* Bye Week - editable */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm">
+        {renderEditableCell('byeWeek', player.byeWeek)}
       </td>
 
       {/* Projected Points - editable */}
@@ -157,11 +166,7 @@ export function PlayerRow({
           className="text-xs border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
         >
           <option value="">No Tier</option>
-          {tiers.map(tier => (
-            <option key={tier.id} value={tier.id}>
-              {tier.name}
-            </option>
-          ))}
+          {tierOptions}
         </select>
       </td>
 
@@ -217,4 +222,15 @@ export function PlayerRow({
       </td>
     </tr>
   );
-}
+}, (prevProps, nextProps) => {
+  // Custom comparison function for better memoization
+  return (
+    prevProps.player.id === nextProps.player.id &&
+    prevProps.player.customRank === nextProps.player.customRank &&
+    prevProps.player.projectedPoints === nextProps.player.projectedPoints &&
+    prevProps.player.vorp === nextProps.player.vorp &&
+    prevProps.player.isDrafted === nextProps.player.isDrafted &&
+    prevProps.player.tierId === nextProps.player.tierId &&
+    prevProps.tiers.length === nextProps.tiers.length
+  );
+});

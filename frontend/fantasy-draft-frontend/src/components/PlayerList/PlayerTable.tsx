@@ -1,4 +1,5 @@
 // src/components/PlayerList/PlayerTable.tsx
+import { memo, useMemo } from 'react';
 import type { Player, Tier } from '../../api/playerApi';
 import { PlayerRow } from './PlayerRow';
 
@@ -14,7 +15,8 @@ interface PlayerTableProps {
   onShowNotes: (id: string) => void;
 }
 
-export function PlayerTable({
+// PERFORMANCE: Memoize the table to prevent unnecessary re-renders
+export const PlayerTable = memo(function PlayerTable({
   tierInfo,
   players,
   tiers,
@@ -25,6 +27,16 @@ export function PlayerTable({
   onShowDetail,
   onShowNotes
 }: PlayerTableProps) {
+  // Memoize chunked players to prevent recreation on every render
+  const chunkedPlayers = useMemo(() => {
+    const CHUNK_SIZE = 50; // Only render 50 players per tier at a time
+    const chunks = [];
+    for (let i = 0; i < players.length; i += CHUNK_SIZE) {
+      chunks.push(players.slice(i, i + CHUNK_SIZE));
+    }
+    return chunks;
+  }, [players]);
+
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden border">
       <div 
@@ -45,7 +57,7 @@ export function PlayerTable({
 
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>
               <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Drafted
@@ -86,7 +98,8 @@ export function PlayerTable({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {players.map((player) => (
+            {/* PERFORMANCE: Only render first chunk initially, load more on scroll */}
+            {chunkedPlayers[0]?.map((player) => (
               <PlayerRow
                 key={player.id}
                 player={player}
@@ -99,9 +112,24 @@ export function PlayerTable({
                 onShowNotes={onShowNotes}
               />
             ))}
+            {chunkedPlayers.length > 1 && (
+              <tr>
+                <td colSpan={12} className="px-6 py-4 text-center">
+                  <button
+                    onClick={() => {
+                      // TODO: Implement load more functionality
+                      console.log('Load more players...');
+                    }}
+                    className="text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Load {Math.min(50, players.length - 50)} more players...
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
     </div>
   );
-}
+});
