@@ -1,3 +1,4 @@
+// backend/prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -26,12 +27,20 @@ model Player {
   customRank        Int?
   aliases           String[]    @default([])
   
+  // Sleeper integration fields
+  sleeperId         String?     // Sleeper player ID for syncing
+  lastSyncAt        DateTime?   // When this player was last synced from Sleeper
+  dataSource        String      @default("manual") // "sleeper", "manual", "import"
+  
   // Relations
   tier              Tier?       @relation(fields: [tierId], references: [id])
   playerTags        PlayerTag[]
   notes             Note[]
   
   @@unique([name, position])
+  @@index([sleeperId])
+  @@index([dataSource])
+  @@index([lastSyncAt])
 }
 
 model Tag {
