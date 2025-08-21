@@ -145,77 +145,7 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
             <div className="bg-gray-50 rounded-lg p-4 mb-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <div className="text-xs text-gray-600 mt-2">
-                {syncResult.message}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Trending Players Section */}
-        <div className="bg-white rounded-lg border shadow-sm p-6">
-          <h3 className="text-lg font-semibold mb-4 text-gray-800">📈 Trending Players</h3>
-          
-          <div className="space-y-4">
-            {/* Most Added */}
-            <div>
-              <h4 className="text-sm font-medium text-green-600 mb-2">🔥 Most Added (24h)</h4>
-              <div className="space-y-1">
-                {trendingAdds.slice(0, 5).map((player, index) => (
-                  <div key={player.player_id} className="flex justify-between items-center text-sm">
-                    <span className="truncate">
-                      {player.player?.first_name} {player.player?.last_name} 
-                      <span className="text-gray-500 ml-1">
-                        ({player.player?.position} - {player.player?.team})
-                      </span>
-                    </span>
-                    <span className="text-green-600 font-medium">+{player.count}</span>
-                  </div>
-                ))}
-                {trendingAdds.length === 0 && (
-                  <div className="text-gray-500 text-sm">No trending data available</div>
-                )}
-              </div>
-            </div>
-
-            {/* Most Dropped */}
-            <div>
-              <h4 className="text-sm font-medium text-red-600 mb-2">📉 Most Dropped (24h)</h4>
-              <div className="space-y-1">
-                {trendingDrops.slice(0, 5).map((player, index) => (
-                  <div key={player.player_id} className="flex justify-between items-center text-sm">
-                    <span className="truncate">
-                      {player.player?.first_name} {player.player?.last_name}
-                      <span className="text-gray-500 ml-1">
-                        ({player.player?.position} - {player.player?.team})
-                      </span>
-                    </span>
-                    <span className="text-red-600 font-medium">-{player.count}</span>
-                  </div>
-                ))}
-                {trendingDrops.length === 0 && (
-                  <div className="text-gray-500 text-sm">No trending data available</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Info Section */}
-      <div className="bg-emerald-50 rounded-lg p-4 border border-emerald-200">
-        <h3 className="font-medium text-emerald-900 mb-2">🛡️ Data Protection</h3>
-        <ul className="text-sm text-emerald-800 space-y-1">
-          <li>• Your custom notes, tags, tiers, and draft status are always preserved</li>
-          <li>• Only base player stats (projections, team info) are updated from Sleeper</li>
-          <li>• You can still use Excel import to add data from other sources</li>
-          <li>• Sleeper sync provides real-time player data and trending insights</li>
-          <li>• Rate limited to stay within Sleeper's API guidelines (1000 calls/min)</li>
-        </ul>
-      </div>
-    </div>
-  );
-}gray-600">Sleeper Players:</div>
+                  <div className="text-gray-600">Sleeper Players:</div>
                   <div className="font-semibold text-emerald-600">
                     {preview.sleeper.activeFantasyPlayers.toLocaleString()}
                   </div>
@@ -347,4 +277,115 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
                   <div>• {syncResult.skippedCount} players skipped</div>
                 )}
               </div>
-              <div className="text-
+              <div className="text-xs text-gray-600 mt-2">
+                {syncResult.message}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Trending Players Section */}
+        <div className="bg-white rounded-lg border shadow-sm p-6">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">📈 Trending Players</h3>
+          
+          <div className="space-y-4">
+            {/* Most Added */}
+            <div>
+              <h4 className="text-sm font-medium text-green-600 mb-2">🔥 Most Added (24h)</h4>
+              <div className="space-y-1">
+                {trendingAdds.slice(0, 5).map((player, index) => (
+                  <div key={player.player_id} className="flex justify-between items-center text-sm">
+                    <span className="truncate">
+                      {player.player?.first_name} {player.player?.last_name} 
+                      <span className="text-gray-500 ml-1">
+                        ({player.player?.position} - {player.player?.team})
+                      </span>
+                    </span>
+                    <span className="text-green-600 font-medium">+{player.count}</span>
+                  </div>
+                ))}
+                {trendingAdds.length === 0 && (
+                  <div className="text-gray-500 text-sm">No trending data available</div>
+                )}
+              </div>
+            </div>
+
+            {/* Most Dropped */}
+            <div>
+              <h4 className="text-sm font-medium text-red-600 mb-2">📉 Most Dropped (24h)</h4>
+              <div className="space-y-1">
+                {trendingDrops.slice(0, 5).map((player, index) => (
+                  <div key={player.player_id} className="flex justify-between items-center text-sm">
+                    <span className="truncate">
+                      {player.player?.first_name} {player.player?.last_name}
+                      <span className="text-gray-500 ml-1">
+                        ({player.player?.position} - {player.player?.team})
+                      </span>
+                    </span>
+                    <span className="text-red-600 font-medium">-{player.count}</span>
+                  </div>
+                ))}
+                {trendingDrops.length === 0 && (
+                  <div className="text-gray-500 text-sm">No trending data available</div>
+                )}
+              </div>
+            </div>
+
+            {/* Refresh Button */}
+            <div className="pt-2 border-t">
+              <button
+                onClick={loadTrendingData}
+                className="text-sm text-emerald-600 hover:text-emerald-800 font-medium"
+              >
+                🔄 Refresh Trending Data
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Info Section */}
+      <div className="bg-emerald-50 rounded-lg p-4 border border-emerald-200">
+        <h3 className="font-medium text-emerald-900 mb-2">🛡️ Data Protection</h3>
+        <ul className="text-sm text-emerald-800 space-y-1">
+          <li>• Your custom notes, tags, tiers, and draft status are always preserved</li>
+          <li>• Only base player stats (projections, team info) are updated from Sleeper</li>
+          <li>• You can still use Excel import to add data from other sources</li>
+          <li>• Sleeper sync provides real-time player data and trending insights</li>
+          <li>• Rate limited to stay within Sleeper's API guidelines (1000 calls/min)</li>
+        </ul>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="bg-white rounded-lg border shadow-sm p-4">
+        <h3 className="font-medium text-gray-800 mb-3">⚡ Quick Actions</h3>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={loadPreview}
+            disabled={isLoadingPreview}
+            className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50"
+          >
+            🔄 Refresh Preview
+          </button>
+          <button
+            onClick={loadTrendingData}
+            className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200"
+          >
+            📈 Update Trending
+          </button>
+          <button
+            onClick={() => setSyncOptions({
+              includeProjections: true,
+              season: '2024',
+              week: '',
+              onlyActive: true
+            })}
+            className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+          >
+            🔧 Reset Options
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
