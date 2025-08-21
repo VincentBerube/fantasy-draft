@@ -1,5 +1,5 @@
 // src/components/PlayerList/PlayerTable.tsx
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import type { Player, Tier } from '../../api/playerApi';
 import { PlayerRow } from './PlayerRow';
 
@@ -27,15 +27,31 @@ export const PlayerTable = memo(function PlayerTable({
   onShowDetail,
   onShowNotes
 }: PlayerTableProps) {
+  const CHUNK_SIZE = 50;
+  const [visibleChunks, setVisibleChunks] = useState(1); // Start by showing 1 chunk
+
   // Memoize chunked players to prevent recreation on every render
   const chunkedPlayers = useMemo(() => {
-    const CHUNK_SIZE = 50; // Only render 50 players per tier at a time
     const chunks = [];
     for (let i = 0; i < players.length; i += CHUNK_SIZE) {
       chunks.push(players.slice(i, i + CHUNK_SIZE));
     }
     return chunks;
   }, [players]);
+
+  // Get currently visible players
+  const visiblePlayers = useMemo(() => {
+    return chunkedPlayers
+      .slice(0, visibleChunks)
+      .flat();
+  }, [chunkedPlayers, visibleChunks]);
+
+  const handleLoadMore = () => {
+    setVisibleChunks(prev => Math.min(prev + 1, chunkedPlayers.length));
+  };
+
+  const remainingPlayers = players.length - visiblePlayers.length;
+  const hasMorePlayers = visibleChunks < chunkedPlayers.length;
 
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden border">
@@ -51,6 +67,9 @@ export const PlayerTable = memo(function PlayerTable({
           {tierInfo ? tierInfo.name : 'Unassigned Players'} 
           <span className="ml-2 text-sm font-normal text-gray-600">
             ({players.length} players)
+            {hasMorePlayers && (
+              <span className="text-blue-600"> - Showing {visiblePlayers.length}</span>
+            )}
           </span>
         </h3>
       </div>
@@ -98,8 +117,8 @@ export const PlayerTable = memo(function PlayerTable({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {/* PERFORMANCE: Only render first chunk initially, load more on scroll */}
-            {chunkedPlayers[0]?.map((player) => (
+            {/* Render visible players */}
+            {visiblePlayers.map((player) => (
               <PlayerRow
                 key={player.id}
                 player={player}
@@ -112,17 +131,36 @@ export const PlayerTable = memo(function PlayerTable({
                 onShowNotes={onShowNotes}
               />
             ))}
-            {chunkedPlayers.length > 1 && (
+            
+            {/* Load more button */}
+            {hasMorePlayers && (
               <tr>
-                <td colSpan={12} className="px-6 py-4 text-center">
+                <td colSpan={12} className="px-6 py-6 text-center bg-gray-50">
                   <button
-                    onClick={() => {
-                      // TODO: Implement load more functionality
-                      console.log('Load more players...');
-                    }}
-                    className="text-blue-600 hover:text-blue-800 font-medium"
+                    onClick={handleLoadMore}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-blue-600 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
                   >
-                    Load {Math.min(50, players.length - 50)} more players...
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                    Load {Math.min(CHUNK_SIZE, remainingPlayers)} more players
+                    <span className="ml-2 text-xs text-gray-500">
+                      ({remainingPlayers} remaining)
+                    </span>
+                  </button>
+                </td>
+              </tr>
+            )}
+
+            {/* Show all button for convenience */}
+            {hasMorePlayers && chunkedPlayers.length > 2 && (
+              <tr>
+                <td colSpan={12} className="px-6 py-2 text-center">
+                  <button
+                    onClick={() => setVisibleChunks(chunkedPlayers.length)}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  >
+                    Show all {players.length} players
                   </button>
                 </td>
               </tr>
