@@ -3,23 +3,31 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: 'http://localhost:3001/api',
-  timeout: 30000, // 30 second timeout for large imports
+  timeout: 60000, // 60 second timeout for imports
 });
 
-export interface Tag {
+export interface Player {
   id: string;
   name: string;
-  color: string;
-  createdAt: string;
-}
-
-export interface Note {
-  id: string;
-  playerId: string;
-  content: string;
-  color: string;
-  createdAt: string;
-  updatedAt: string;
+  position: string;
+  team: string | null;
+  projectedPoints: number | null;
+  byeWeek: number | null;
+  rank: number | null;
+  customRank: number | null;
+  vorp: number | null;
+  adp: number | null;
+  aliases: string[];
+  isDrafted: boolean;
+  tierId: string | null;
+  tier?: Tier;
+  playerTags: PlayerTag[];
+  notes: Note[];
+  sleeperId: string | null;
+  dataSource: string;
+  lastSyncAt: string | null;
+  depthChartPosition?: string;
+  depthChartOrder?: number;
 }
 
 export interface Tier {
@@ -27,50 +35,69 @@ export interface Tier {
   name: string;
   color: string;
   order: number;
-  createdAt: string;
 }
 
-export interface Player {
+export interface Tag {
   id: string;
   name: string;
-  position: string;
-  team?: string;
-  rank?: number;
-  customRank?: number;
-  positionalRank?: string;
-  projectedPoints?: number;
-  vorp?: number;
-  adp?: number;
-  byeWeek?: number;
-  tierId?: string;  // The foreign key field
-  tier?: Tier;      // The included relation object
-  isDrafted: boolean;
-  aliases: string[];
-  userNotes: string[];
-  customTags: string[];
-  playerTags: Array<{ tag: Tag }>;
-  notes: Note[];
-  // Depth chart fields from Sleeper
-  depthChartPosition?: string; // Changed from number to string
-  depthChartOrder?: number;
+  color: string;
+}
+
+export interface PlayerTag {
+  id: string;
+  tag: Tag;
+}
+
+export interface Note {
+  id: string;
+  content: string;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImportOptions {
+  updateStrategy?: 'merge' | 'overwrite';
+  autoMatchThreshold?: number;
+  createNewPlayers?: boolean;
+  preserveSleeperData?: boolean;
 }
 
 export const playerApi = {
-  // Player CRUD operations
-  importPlayers: (file: File, mergeStrategy: 'update' | 'preserve' = 'update') => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('mergeStrategy', mergeStrategy);
-    
+  // Enhanced import with smart matching
+  importPlayers: (formData: FormData) => {
     return api.post('/players/import', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  
-  getPlayers: (scoring?: 'PPR' | 'Standard', includeDrafted: boolean = true) => {
-    return api.get('/players', { 
-      params: { scoring, includeDrafted } 
+
+  // Get import preview
+  getImportPreview: (formData: FormData) => {
+    return api.post('/players/import/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
     });
+  },
+
+  // Resolve manual match
+  resolveManualMatch: (data: {
+    excelRowIndex: number;
+    selectedPlayerId: string;
+    excelData: Record<string, any>;
+    options?: ImportOptions;
+  }) => {
+    return api.post('/players/import/resolve-match', data);
+  },
+  
+  // Enhanced player fetching with filters
+  getPlayers: (filters?: {
+    scoring?: 'PPR' | 'Standard';
+    includeDrafted?: boolean;
+    dataSource?: 'sleeper' | 'excel' | 'manual';
+    position?: string;
+    team?: string;
+    hasSleeperId?: boolean;
+  }) => {
+    return api.get('/players', { params: filters });
   },
 
   getPlayer: (id: string) => {
@@ -78,7 +105,7 @@ export const playerApi = {
   },
 
   // FAST UPDATE - for simple field changes (no relations loaded)
-  updatePlayerQuick: (id: string, data: Partial<Pick<Player, 'customRank' | 'projectedPoints' | 'vorp' | 'adp' | 'rank'>>) => {
+  updatePlayerQuick: (id: string, data: Partial<Pick<Player, 'customRank' | 'projectedPoints' | 'vorp' | 'adp' | 'rank' | 'byeWeek'>>) => {
     return api.patch(`/players/${id}/quick`, data);
   },
 
@@ -106,17 +133,21 @@ export const playerApi = {
   exportPlayers: () => {
     return api.get('/players/export', {
       responseType: 'blob',
-      timeout: 60000, // 60 second timeout for exports
+      timeout: 60000,
     });
   },
 
-  // Legacy methods for backward compatibility
-  updatePlayerNotes: (id: string, notes: string[]) => {
-    return api.patch(`/players/${id}/notes`, { notes });
+  // Note management
+  addNote: (playerId: string, content: string, color: string = '#6B7280') => {
+    return api.post(`/players/${playerId}/notes`, { content, color });
   },
 
-  updatePlayerTags: (id: string, tags: string[]) => {
-    return api.patch(`/players/${id}/tags`, { tags });
+  updateNote: (noteId: string, content?: string, color?: string) => {
+    return api.patch(`/players/notes/${noteId}`, { content, color });
+  },
+
+  deleteNote: (noteId: string) => {
+    return api.delete(`/players/notes/${noteId}`);
   },
 
   // Tag management
@@ -136,28 +167,7 @@ export const playerApi = {
     return api.delete(`/players/tags/${tagId}`);
   },
 
-  addTagToPlayer: (playerId: string, tagId: string) => {
-    return api.post(`/players/${playerId}/tags/${tagId}`);
-  },
-
-  removeTagFromPlayer: (playerId: string, tagId: string) => {
-    return api.delete(`/players/${playerId}/tags/${tagId}`);
-  },
-
-  // Note management
-  addNote: (playerId: string, content: string, color: string = '#6B7280') => {
-    return api.post(`/players/${playerId}/notes`, { content, color });
-  },
-
-  updateNote: (noteId: string, content?: string, color?: string) => {
-    return api.patch(`/players/notes/${noteId}`, { content, color });
-  },
-
-  deleteNote: (noteId: string) => {
-    return api.delete(`/players/notes/${noteId}`);
-  },
-
-  // Tier management
+  // Tier management (assuming similar endpoints exist)
   getTiers: () => {
     return api.get('/players/tiers/all');
   },
@@ -173,4 +183,35 @@ export const playerApi = {
   deleteTier: (tierId: string) => {
     return api.delete(`/players/tiers/${tierId}`);
   },
+
+  addTagToPlayer: (playerId: string, tagId: string) => {
+    return api.post(`/players/${playerId}/tags/${tagId}`);
+  },
+
+  removeTagFromPlayer: (playerId: string, tagId: string) => {
+    return api.delete(`/players/${playerId}/tags/${tagId}`);
+  },
+
+  // Bulk operations
+  bulkToggleDraft: (playerIds: string[], isDrafted: boolean) => {
+    return api.post('/players/bulk/draft', { playerIds, isDrafted });
+  },
+
+  bulkAssignTier: (playerIds: string[], tierId: string | null) => {
+    return api.post('/players/bulk/tier', { playerIds, tierId });
+  },
+
+  // Statistics
+  getPlayerStats: () => {
+    return api.get('/players/stats/summary');
+  },
+
+  // Legacy methods for backward compatibility
+  updatePlayerNotes: (id: string, notes: string[]) => {
+    return api.patch(`/players/${id}/notes`, { notes });
+  },
+
+  updatePlayerTags: (id: string, tags: string[]) => {
+    return api.patch(`/players/${id}/tags`, { tags });
+  }
 };

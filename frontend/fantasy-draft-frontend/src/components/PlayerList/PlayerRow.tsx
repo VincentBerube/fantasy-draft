@@ -1,4 +1,4 @@
-// src/components/PlayerList/PlayerRow.tsx
+// frontend/fantasy-draft-frontend/src/components/PlayerList/PlayerRow.tsx
 import { useState, memo, useCallback } from 'react';
 import type { Player, Tier } from '../../api/playerApi';
 
@@ -11,6 +11,7 @@ interface PlayerRowProps {
   onDelete: (id: string) => void;
   onShowDetail: (id: string) => void;
   onShowNotes: (id: string) => void;
+  isPending?: boolean; // Show loading state for pending updates
 }
 
 // PERFORMANCE: Memoize PlayerRow to prevent unnecessary re-renders
@@ -22,7 +23,8 @@ export const PlayerRow = memo(function PlayerRow({
   onEditCell,
   onDelete,
   onShowDetail,
-  onShowNotes
+  onShowNotes,
+  isPending = false
 }: PlayerRowProps) {
   const [editingCell, setEditingCell] = useState<{ field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -49,19 +51,20 @@ export const PlayerRow = memo(function PlayerRow({
     }
   }, [handleCellEdit]);
 
-  const renderEditableCell = useCallback((field: string, value: any) => {
+  const renderEditableCell = useCallback((field: string, value: any, isNumeric: boolean = false) => {
     const isEditing = editingCell?.field === field;
     
     if (isEditing) {
       return (
         <input
-          type={typeof value === 'number' ? 'number' : 'text'}
+          type={isNumeric ? 'number' : 'text'}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={() => handleCellEdit(field, value)}
           onKeyDown={(e) => handleKeyDown(e, field, value)}
           className="w-full px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500"
           autoFocus
+          step={isNumeric ? "0.1" : undefined}
         />
       );
     }
@@ -69,13 +72,18 @@ export const PlayerRow = memo(function PlayerRow({
     return (
       <span
         onClick={() => handleStartEdit(field, value)}
-        className="cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block"
+        className={`cursor-pointer hover:bg-gray-100 px-2 py-1 rounded block transition-colors ${
+          isPending ? 'opacity-50' : ''
+        }`}
         title="Click to edit"
       >
-        {value || '-'}
+        {isNumeric && value !== null && value !== undefined ? 
+          Number(value).toFixed(1) : 
+          (value || '-')
+        }
       </span>
     );
-  }, [editingCell, editValue, handleCellEdit, handleKeyDown, handleStartEdit]);
+  }, [editingCell, editValue, handleCellEdit, handleKeyDown, handleStartEdit, isPending]);
 
   // Memoize tier options to prevent recreation on every render
   const tierOptions = tiers.map(tier => (
@@ -84,43 +92,76 @@ export const PlayerRow = memo(function PlayerRow({
     </option>
   ));
 
+  // Data source indicator
+  const getDataSourceColor = (dataSource: string) => {
+    switch (dataSource) {
+      case 'sleeper': return 'bg-green-100 text-green-800';
+      case 'excel': return 'bg-blue-100 text-blue-800';
+      case 'manual': return 'bg-gray-100 text-gray-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
   return (
     <tr className={`hover:bg-gray-50 transition-colors ${
-      player.isDrafted ? 'bg-gray-100 opacity-75' : ''
-    }`}>
-      {/* Drafted checkbox */}
+      player.isDrafted ? 
+        'bg-red-50 opacity-60' : 
+        ''
+    } ${isPending ? 'bg-yellow-50' : ''}`}>
+      
+      {/* Draft Status Checkbox */}
       <td className="px-3 py-4 whitespace-nowrap">
         <input
           type="checkbox"
           checked={player.isDrafted}
           onChange={(e) => onToggleDrafted(player.id, e.target.checked)}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+          disabled={isPending}
         />
       </td>
 
       {/* Rank - editable */}
-      <td className="px-3 py-4 whitespace-nowrap">
-        <div className="flex items-center space-x-2">
-          <div className="text-sm font-bold text-gray-900">
-            {renderEditableCell('customRank', player.customRank || player.rank)}
-          </div>
-          {player.positionalRank && (
-            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-              {player.positionalRank}
-            </span>
-          )}
-        </div>
+      <td className="px-3 py-4 whitespace-nowrap text-sm font-medium">
+        {renderEditableCell('rank', player.rank, true)}
       </td>
 
-      {/* Player name - NO AUTOMATIC MODAL OPENING */}
+      {/* Custom Rank - editable */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm font-medium">
+        {renderEditableCell('customRank', player.customRank, true)}
+      </td>
+
+      {/* Player Name */}
       <td className="px-3 py-4 whitespace-nowrap">
-        <div className="text-sm font-medium text-gray-900">
-          {player.name}
-          {player.aliases.length > 0 && (
-            <span className="text-xs text-gray-400 block">
-              Also: {player.aliases.join(', ')}
-            </span>
-          )}
+        <div className="flex items-center">
+          <div>
+            <div className="text-sm font-medium text-gray-900">
+              {player.name}
+            </div>
+            <div className="flex items-center space-x-1 mt-1">
+              {/* Data source indicator */}
+              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
+                getDataSourceColor(player.dataSource)
+              }`}>
+                {player.dataSource === 'sleeper' ? '🏈' : 
+                 player.dataSource === 'excel' ? '📊' : '✏️'}
+                {player.dataSource}
+              </span>
+              
+              {/* Sleeper ID indicator */}
+              {player.sleeperId && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  Sleeper
+                </span>
+              )}
+              
+              {/* Last sync indicator */}
+              {player.lastSyncAt && (
+                <span className="text-xs text-gray-500" title={`Last synced: ${new Date(player.lastSyncAt).toLocaleDateString()}`}>
+                  📅
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </td>
 
@@ -145,17 +186,22 @@ export const PlayerRow = memo(function PlayerRow({
 
       {/* Bye Week - editable */}
       <td className="px-3 py-4 whitespace-nowrap text-sm">
-        {renderEditableCell('byeWeek', player.byeWeek)}
+        {renderEditableCell('byeWeek', player.byeWeek, true)}
       </td>
 
       {/* Projected Points - editable */}
       <td className="px-3 py-4 whitespace-nowrap text-sm">
-        {renderEditableCell('projectedPoints', player.projectedPoints)}
+        {renderEditableCell('projectedPoints', player.projectedPoints, true)}
       </td>
 
       {/* VORP - editable */}
       <td className="px-3 py-4 whitespace-nowrap text-sm">
-        {renderEditableCell('vorp', player.vorp)}
+        {renderEditableCell('vorp', player.vorp, true)}
+      </td>
+
+      {/* ADP - editable */}
+      <td className="px-3 py-4 whitespace-nowrap text-sm">
+        {renderEditableCell('adp', player.adp, true)}
       </td>
 
       {/* Tier dropdown */}
@@ -164,6 +210,7 @@ export const PlayerRow = memo(function PlayerRow({
           value={player.tierId || ''}
           onChange={(e) => onAssignTier(player.id, e.target.value || null)}
           className="text-xs border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+          disabled={isPending}
         >
           <option value="">No Tier</option>
           {tierOptions}
@@ -194,43 +241,38 @@ export const PlayerRow = memo(function PlayerRow({
       <td className="px-3 py-4 whitespace-nowrap text-sm">
         <button
           onClick={() => onShowNotes(player.id)}
-          className="text-blue-600 hover:text-blue-900"
+          className="text-blue-600 hover:text-blue-900 disabled:opacity-50"
           title={player.notes.length > 0 ? `${player.notes.length} note(s)` : 'Add notes'}
+          disabled={isPending}
         >
-          {player.notes.length > 0 ? '📝' : '➕'}
+          {player.notes.length > 0 ? 
+            `📝 ${player.notes.length}` : 
+            '📝 Add'
+          }
         </button>
       </td>
 
       {/* Actions */}
-      <td className="px-3 py-4 whitespace-nowrap text-sm font-medium">
+      <td className="px-3 py-4 whitespace-nowrap text-right text-sm font-medium">
         <div className="flex space-x-2">
           <button
             onClick={() => onShowDetail(player.id)}
-            className="text-blue-600 hover:text-blue-900"
+            className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50"
             title="View details"
+            disabled={isPending}
           >
             👁️
           </button>
           <button
             onClick={() => onDelete(player.id)}
-            className="text-red-600 hover:text-red-900"
-            title="Delete player"
+            className="text-red-600 hover:text-red-900 disabled:opacity-50"
+            title={player.sleeperId ? "Cannot delete Sleeper players" : "Delete player"}
+            disabled={isPending || !!player.sleeperId}
           >
-            🗑️
+            {player.sleeperId ? '🔒' : '🗑️'}
           </button>
         </div>
       </td>
     </tr>
-  );
-}, (prevProps, nextProps) => {
-  // Custom comparison function for better memoization
-  return (
-    prevProps.player.id === nextProps.player.id &&
-    prevProps.player.customRank === nextProps.player.customRank &&
-    prevProps.player.projectedPoints === nextProps.player.projectedPoints &&
-    prevProps.player.vorp === nextProps.player.vorp &&
-    prevProps.player.isDrafted === nextProps.player.isDrafted &&
-    prevProps.player.tierId === nextProps.player.tierId &&
-    prevProps.tiers.length === nextProps.tiers.length
   );
 });
