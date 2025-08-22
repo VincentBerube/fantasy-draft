@@ -20,10 +20,19 @@ router.post('/sync', async (req, res) => {
       topPlayersLimit = 500
     } = req.body;
 
+    console.log('📥 Sync request received with options:', {
+      includeProjections,
+      season,
+      week,
+      onlyActive,
+      positionsFilter,
+      topPlayersLimit
+    });
+
     const syncOptions: SleeperSyncOptions = {
       includeProjections,
       season,
-      week: week ? parseInt(week) : undefined,
+      week: week ? parseInt(week.toString()) : undefined,
       onlyActive,
       positionsFilter,
       topPlayersLimit: parseInt(topPlayersLimit.toString())
@@ -93,6 +102,53 @@ router.get('/nfl-state', async (req, res) => {
 });
 
 /**
+ * Get weekly stats from Sleeper
+ */
+router.get('/stats/weekly', async (req, res) => {
+  try {
+    const { season = '2024', week } = req.query;
+    
+    if (!week) {
+      return res.status(400).json({
+        error: 'Week parameter is required for weekly stats'
+      });
+    }
+    
+    const stats = await sleeperAPIService.getWeeklyStats(
+      season as string,
+      parseInt(week as string)
+    );
+
+    res.json(stats);
+  } catch (error: any) {
+    console.error('Error fetching weekly stats:', error);
+    res.status(500).json({
+      error: 'Failed to fetch weekly stats',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * Get season stats from Sleeper
+ */
+router.get('/stats/season', async (req, res) => {
+  try {
+    const { season = '2024' } = req.query;
+    
+    const stats = await sleeperAPIService.getSeasonStats(season as string);
+
+    res.json(stats);
+  } catch (error: any) {
+    console.error('Error fetching season stats:', error);
+    res.status(500).json({
+      error: 'Failed to fetch season stats',
+      details: error.message
+    });
+  }
+});
+
+/**
  * Get projections for a specific week/season
  */
 router.get('/projections', async (req, res) => {
@@ -119,16 +175,31 @@ router.get('/projections', async (req, res) => {
  */
 router.get('/sync-preview', async (req, res) => {
   try {
-    const { onlyActive = true } = req.query;
+    const { 
+      onlyActive = true, 
+      positionsFilter = 'QB,WR,RB,TE,K',
+      topPlayersLimit = 500 
+    } = req.query;
     
     // Get current players from Sleeper
     const sleeperPlayers = await sleeperAPIService.getAllPlayers();
     
+    // Parse positions filter
+    const positions = (positionsFilter as string).split(',');
+    const limit = parseInt(topPlayersLimit as string);
+    
     // Filter active fantasy players
-    const activeCount = Object.values(sleeperPlayers)
+    const filteredCount = Object.values(sleeperPlayers)
       .filter(player => {
         if (onlyActive === 'true' && player.status !== 'Active') return false;
         if (!player.fantasy_positions || player.fantasy_positions.length === 0) return false;
+        
+        // Check if player has any of our desired positions
+        const hasDesiredPosition = player.fantasy_positions.some(pos => 
+          positions.includes(pos)
+        );
+        if (!hasDesiredPosition) return false;
+        
         return true;
       }).length;
 
@@ -146,17 +217,25 @@ router.get('/sync-preview', async (req, res) => {
       }
     });
 
+    const finalCount = Math.min(filteredCount, limit);
+
     res.json({
       sleeper: {
         totalPlayers: Object.keys(sleeperPlayers).length,
-        activeFantasyPlayers: activeCount
+        activeFantasyPlayers: filteredCount,
+        filteredForSync: finalCount
       },
       current: {
         totalPlayers: currentPlayerCount,
         draftedPlayers: draftedCount,
         playersWithNotes: withNotesCount
       },
-      message: `Would sync ${activeCount} active players from Sleeper. Your existing ${draftedCount} drafted players and ${withNotesCount} players with notes will be preserved.`
+      settings: {
+        positions,
+        limit,
+        onlyActive: onlyActive === 'true'
+      },
+      message: `Would sync ${finalCount} top ${positions.join('/')} players from Sleeper (filtered from ${filteredCount} eligible players). Your existing ${draftedCount} drafted players and ${withNotesCount} players with notes will be preserved.`
     });
   } catch (error: any) {
     console.error('Error generating sync preview:', error);

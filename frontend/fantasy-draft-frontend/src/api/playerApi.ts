@@ -50,6 +50,9 @@ export interface Player {
   customTags: string[];
   playerTags: Array<{ tag: Tag }>;
   notes: Note[];
+  // Depth chart fields from Sleeper
+  depthChartPosition?: number;
+  depthChartOrder?: number;
 }
 
 export const playerApi = {

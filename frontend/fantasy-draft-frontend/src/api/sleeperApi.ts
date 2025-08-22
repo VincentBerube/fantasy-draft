@@ -19,11 +19,17 @@ export interface SyncPreview {
   sleeper: {
     totalPlayers: number;
     activeFantasyPlayers: number;
+    filteredForSync: number;
   };
   current: {
     totalPlayers: number;
     draftedPlayers: number;
     playersWithNotes: number;
+  };
+  settings: {
+    positions: string[];
+    limit: number;
+    onlyActive: boolean;
   };
   message: string;
 }
@@ -68,9 +74,18 @@ export const sleeperApi = {
   },
 
   // Get preview of what would be synced
-  getSyncPreview: (onlyActive: boolean = true) => {
+  getSyncPreview: (options: {
+    onlyActive?: boolean;
+    positionsFilter?: string[];
+    topPlayersLimit?: number;
+  } = {}) => {
+    const { onlyActive = true, positionsFilter = ['QB', 'WR', 'RB', 'TE', 'K'], topPlayersLimit = 500 } = options;
     return api.get<SyncPreview>('/sync-preview', {
-      params: { onlyActive }
+      params: { 
+        onlyActive, 
+        positionsFilter: positionsFilter.join(','),
+        topPlayersLimit 
+      }
     });
   },
 

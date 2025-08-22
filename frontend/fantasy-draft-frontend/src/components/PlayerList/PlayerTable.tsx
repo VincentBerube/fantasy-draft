@@ -1,4 +1,4 @@
-// src/components/PlayerList/PlayerTable.tsx
+// frontend/fantasy-draft-frontend/src/components/PlayerList/PlayerTable.tsx
 import { memo, useMemo, useState } from 'react';
 import type { Player, Tier } from '../../api/playerApi';
 import { PlayerRow } from './PlayerRow';
@@ -14,6 +14,39 @@ interface PlayerTableProps {
   onShowDetail: (id: string) => void;
   onShowNotes: (id: string) => void;
 }
+
+// Helper function to format depth chart information
+const formatDepthChart = (depthChartPosition?: number, depthChartOrder?: number) => {
+  if (!depthChartPosition) return '';
+  
+  const positions = {
+    1: 'Starter',
+    2: '2nd String', 
+    3: '3rd String',
+    4: '4th String'
+  };
+  
+  const basePosition = positions[depthChartPosition as keyof typeof positions] || `${depthChartPosition}th`;
+  
+  // If there's an order within the position (e.g., for WR1, WR2, WR3)
+  if (depthChartOrder && depthChartOrder > 1) {
+    return `${basePosition} #${depthChartOrder}`;
+  }
+  
+  return basePosition;
+};
+
+// Helper function to get depth chart color
+const getDepthChartColor = (depthChartPosition?: number) => {
+  if (!depthChartPosition) return 'text-gray-400';
+  
+  switch (depthChartPosition) {
+    case 1: return 'text-green-600 font-semibold'; // Starter - green
+    case 2: return 'text-yellow-600'; // Backup - yellow
+    case 3: return 'text-orange-600'; // 3rd string - orange
+    default: return 'text-red-600'; // Deep backup - red
+  }
+};
 
 // PERFORMANCE: Memoize the table to prevent unnecessary re-renders
 export const PlayerTable = memo(function PlayerTable({
@@ -94,6 +127,9 @@ export const PlayerTable = memo(function PlayerTable({
                 Team
               </th>
               <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Depth Chart
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Bye
               </th>
               <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -119,55 +155,157 @@ export const PlayerTable = memo(function PlayerTable({
           <tbody className="bg-white divide-y divide-gray-200">
             {/* Render visible players */}
             {visiblePlayers.map((player) => (
-              <PlayerRow
+              <tr
                 key={player.id}
-                player={player}
-                tiers={tiers}
-                onToggleDrafted={onToggleDrafted}
-                onAssignTier={onAssignTier}
-                onEditCell={onEditCell}
-                onDelete={onDelete}
-                onShowDetail={onShowDetail}
-                onShowNotes={onShowNotes}
-              />
-            ))}
-            
-            {/* Load more button */}
-            {hasMorePlayers && (
-              <tr>
-                <td colSpan={12} className="px-6 py-6 text-center bg-gray-50">
+                className={`hover:bg-gray-50 ${player.isDrafted ? 'bg-gray-100 opacity-60' : ''}`}
+              >
+                {/* Existing columns... */}
+                <td className="px-3 py-4 whitespace-nowrap">
                   <button
-                    onClick={handleLoadMore}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-blue-600 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                    onClick={() => onToggleDrafted(player.id, !player.isDrafted)}
+                    className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                      player.isDrafted 
+                        ? 'bg-red-100 text-red-800 hover:bg-red-200' 
+                        : 'bg-green-100 text-green-800 hover:bg-green-200'
+                    }`}
                   >
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                    Load {Math.min(CHUNK_SIZE, remainingPlayers)} more players
-                    <span className="ml-2 text-xs text-gray-500">
-                      ({remainingPlayers} remaining)
-                    </span>
+                    {player.isDrafted ? '✓ Drafted' : 'Available'}
                   </button>
                 </td>
-              </tr>
-            )}
 
-            {/* Show all button for convenience */}
-            {hasMorePlayers && chunkedPlayers.length > 2 && (
-              <tr>
-                <td colSpan={12} className="px-6 py-2 text-center">
-                  <button
-                    onClick={() => setVisibleChunks(chunkedPlayers.length)}
-                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
+                  {player.customRank || player.rank || '-'}
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap">
+                  <div className="text-sm font-medium text-gray-900">{player.name}</div>
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap">
+                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                    player.position === 'QB' ? 'bg-red-100 text-red-800' :
+                    player.position === 'RB' ? 'bg-green-100 text-green-800' :
+                    player.position === 'WR' ? 'bg-blue-100 text-blue-800' :
+                    player.position === 'TE' ? 'bg-purple-100 text-purple-800' :
+                    player.position === 'K' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {player.position}
+                  </span>
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
+                  {player.team || '-'}
+                </td>
+
+                {/* NEW: Depth Chart Column */}
+                <td className="px-3 py-4 whitespace-nowrap text-sm">
+                  {player.depthChartPosition ? (
+                    <span 
+                      className={`text-xs ${getDepthChartColor(player.depthChartPosition)}`}
+                      title={`Depth Chart Position: ${player.depthChartPosition}${player.depthChartOrder ? `, Order: ${player.depthChartOrder}` : ''}`}
+                    >
+                      {formatDepthChart(player.depthChartPosition, player.depthChartOrder)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 text-xs">-</span>
+                  )}
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {player.byeWeek || '-'}
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
+                  {player.projectedPoints ? player.projectedPoints.toFixed(1) : '-'}
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-900">
+                  {player.vorp ? player.vorp.toFixed(1) : '-'}
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap text-sm">
+                  <select
+                    value={player.tierId || ''}
+                    onChange={(e) => onAssignTier(player.id, e.target.value || null)}
+                    className="text-xs border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
                   >
-                    Show all {players.length} players
+                    <option value="">No Tier</option>
+                    {tiers.map(tier => (
+                      <option key={tier.id} value={tier.id}>
+                        {tier.name}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap">
+                  <div className="flex flex-wrap gap-1">
+                    {player.playerTags.map(pt => (
+                      <span
+                        key={pt.tag.id}
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
+                        style={{
+                          backgroundColor: pt.tag.color + '20',
+                          color: pt.tag.color,
+                          borderColor: pt.tag.color,
+                          borderWidth: '1px'
+                        }}
+                      >
+                        {pt.tag.name}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+
+                <td className="px-3 py-4 whitespace-nowrap text-sm">
+                  <button
+                    onClick={() => onShowNotes(player.id)}
+                    className="text-blue-600 hover:text-blue-900"
+                    title={player.notes.length > 0 ? `${player.notes.length} note(s)` : 'Add notes'}
+                  >
+                    {player.notes.length > 0 ? 
+                      `📝 ${player.notes.length}` : 
+                      '📝 Add'
+                    }
                   </button>
                 </td>
+
+                <td className="px-3 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => onShowDetail(player.id)}
+                      className="text-indigo-600 hover:text-indigo-900"
+                      title="View details"
+                    >
+                      👁️
+                    </button>
+                    <button
+                      onClick={() => onDelete(player.id)}
+                      className="text-red-600 hover:text-red-900"
+                      title="Delete player"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </td>
               </tr>
-            )}
+            ))}
           </tbody>
         </table>
       </div>
+
+      {/* Load More Button */}
+      {hasMorePlayers && (
+        <div className="px-6 py-4 bg-gray-50 border-t text-center">
+          <button
+            onClick={handleLoadMore}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+          >
+            Load More ({remainingPlayers} remaining)
+          </button>
+        </div>
+      )}
     </div>
   );
 });

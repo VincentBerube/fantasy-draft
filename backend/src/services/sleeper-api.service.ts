@@ -10,6 +10,26 @@ export interface SleeperSyncOptions {
   topPlayersLimit?: number;
 }
 
+export interface ConvertedPlayer {
+  name: string;
+  position: string;
+  team: string | null;
+  projectedPoints: number | null;
+  byeWeek: number | null;
+  aliases: string[];
+  userNotes: string[];
+  customTags: string[];
+  tierId: string | null;
+  isDrafted: boolean;
+  customRank: number | null;
+  sleeperId: string;
+  dataSource: string;
+  lastSyncAt: Date;
+  rank?: number;
+  depthChartPosition?: number;
+  depthChartOrder?: number;
+}
+
 export interface SleeperPlayer {
   player_id: string;
   first_name: string;
@@ -28,7 +48,22 @@ export interface SleeperPlayer {
   fantasy_positions: string[];
   number?: number;
   depth_chart_position?: number;
+  depth_chart_order?: number;
   status: string;
+  search_rank?: number; // Sleeper's internal ranking
+  search_first_name?: string;
+  search_last_name?: string;
+  hashtag?: string;
+  fantasy_data_id?: number;
+  stats_id?: string;
+  sportradar_id?: string;
+  espn_id?: string;
+  yahoo_id?: string;
+  rotowire_id?: number;
+  rotoworld_id?: number;
+  practice_participation?: string;
+  injury_start_date?: string;
+  birth_country?: string;
 }
 
 export interface SleeperProjections {
@@ -141,8 +176,34 @@ class SleeperAPIService {
   }
 
   /**
-   * Get NFL state (current week, season, etc.)
+   * Get weekly stats for a specific week/season  
    */
+  async getWeeklyStats(season: string = '2024', week: number): Promise<any> {
+    await this.rateLimit();
+    
+    try {
+      const response = await this.axiosInstance.get(`/stats/nfl/${season}/${week}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error fetching weekly stats:', error.message);
+      throw new Error(`Failed to fetch weekly stats: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get season stats
+   */
+  async getSeasonStats(season: string = '2024'): Promise<any> {
+    await this.rateLimit();
+    
+    try {
+      const response = await this.axiosInstance.get(`/stats/nfl/${season}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error fetching season stats:', error.message);
+      throw new Error(`Failed to fetch season stats: ${error.message}`);
+    }
+  }
   async getNFLState() {
     await this.rateLimit();
     
@@ -173,6 +234,7 @@ class SleeperAPIService {
     sleeperId: string;
     dataSource: string;
     lastSyncAt: Date;
+    rank?: number; // Add Sleeper's search rank
   } {
     const fullName = sleeperPlayer.full_name || 
                      `${sleeperPlayer.first_name} ${sleeperPlayer.last_name}`.trim();
@@ -195,6 +257,9 @@ class SleeperAPIService {
       team: sleeperPlayer.team || null,
       projectedPoints,
       byeWeek: null, // Would need to get this from another source
+      rank: sleeperPlayer.search_rank || undefined, // Sleeper's player ranking
+      depthChartPosition: sleeperPlayer.depth_chart_position || undefined,
+      depthChartOrder: sleeperPlayer.depth_chart_order || undefined,
       aliases: [
         sleeperPlayer.search_full_name,
         `${sleeperPlayer.first_name} ${sleeperPlayer.last_name}`,
@@ -217,24 +282,22 @@ class SleeperAPIService {
    * Sync players from Sleeper API to our database
    * This method respects existing user data (notes, tags, tiers, draft status)
    */
-  async syncPlayersToDatabase(prisma: any, options: {
-    includeProjections?: boolean;
-    season?: string;
-    week?: number;
-    onlyActive?: boolean;
-  } = {}) {
+  async syncPlayersToDatabase(prisma: any, options: SleeperSyncOptions = {}) {
     const { 
       includeProjections = true, 
       season = '2024', 
-      onlyActive = true 
+      onlyActive = true,
+      positionsFilter = ['QB', 'WR', 'RB', 'TE', 'K'], // Default fantasy positions
+      topPlayersLimit = 500 // Default to top 500 players
     } = options;
 
     try {
       console.log('🔄 Starting Sleeper data sync...');
+      console.log(`📋 Settings: ${positionsFilter.join(', ')} positions, top ${topPlayersLimit} players`);
       
       // Get all players from Sleeper
       const sleeperPlayers = await this.getAllPlayers();
-      console.log(`📥 Fetched ${Object.keys(sleeperPlayers).length} players from Sleeper`);
+      console.log(`📥 Fetched ${Object.keys(sleeperPlayers).length} total players from Sleeper`);
 
       // Get projections if requested
       let projections: SleeperProjections = {};
@@ -248,17 +311,49 @@ class SleeperAPIService {
       }
 
       // Filter and convert players
-      const playersToSync = Object.entries(sleeperPlayers)
+      const filteredPlayers = Object.entries(sleeperPlayers)
         .filter(([_, player]) => {
+          // Filter by active status
           if (onlyActive && player.status !== 'Active') return false;
+          
+          // Filter by fantasy positions
           if (!player.fantasy_positions || player.fantasy_positions.length === 0) return false;
+          
+          // Check if player has any of our desired positions
+          const hasDesiredPosition = player.fantasy_positions.some(pos => 
+            positionsFilter.includes(pos)
+          );
+          if (!hasDesiredPosition) return false;
+          
           return true;
         })
-        .map(([playerId, sleeperPlayer]) => 
-          this.convertToPlayerFormat(sleeperPlayer, projections[playerId])
-        );
+        .map(([playerId, sleeperPlayer]) => {
+          const playerData = this.convertToPlayerFormat(sleeperPlayer, projections[playerId]);
+          return {
+            ...playerData,
+            // Use multiple ranking criteria for better sorting
+            projectionScore: projections[playerId]?.pts_ppr || 0,
+            sleeperRank: sleeperPlayer.search_rank || 9999, // Lower is better
+            hasProjections: !!projections[playerId]
+          };
+        })
+        // Sort by projections first (if available), then by Sleeper's ranking
+        .sort((a, b) => {
+          // If both have projections, sort by projected points
+          if (a.hasProjections && b.hasProjections) {
+            return (b.projectionScore || 0) - (a.projectionScore || 0);
+          }
+          // If only one has projections, prioritize that one
+          if (a.hasProjections && !b.hasProjections) return -1;
+          if (!a.hasProjections && b.hasProjections) return 1;
+          // If neither has projections, sort by Sleeper's ranking (lower rank = better)
+          return (a.sleeperRank || 9999) - (b.sleeperRank || 9999);
+        })
+        // Take only the top N players
+        .slice(0, topPlayersLimit)
+        .map(({ projectionScore, sleeperRank, hasProjections, ...player }) => player); // Remove the sorting fields
 
-      console.log(`🔄 Processing ${playersToSync.length} active fantasy players...`);
+      console.log(`🎯 Filtered to ${filteredPlayers.length} top fantasy players (positions: ${positionsFilter.join(', ')})`);
 
       let newCount = 0;
       let updatedCount = 0;
@@ -266,8 +361,8 @@ class SleeperAPIService {
 
       // Process players in batches to avoid overwhelming the database
       const batchSize = 50;
-      for (let i = 0; i < playersToSync.length; i += batchSize) {
-        const batch = playersToSync.slice(i, i + batchSize);
+      for (let i = 0; i < filteredPlayers.length; i += batchSize) {
+        const batch = filteredPlayers.slice(i, i + batchSize);
         
         for (const playerData of batch) {
           try {
@@ -290,6 +385,12 @@ class SleeperAPIService {
                   team: playerData.team,
                   projectedPoints: playerData.projectedPoints,
                   aliases: playerData.aliases,
+                  sleeperId: playerData.sleeperId,
+                  lastSyncAt: playerData.lastSyncAt,
+                  dataSource: 'sleeper',
+                  rank: playerData.rank,
+                  depthChartPosition: playerData.depthChartPosition,
+                  depthChartOrder: playerData.depthChartOrder,
                   // DO NOT update: customRank, tierId, isDrafted, userNotes, customTags
                 }
               });
@@ -308,17 +409,17 @@ class SleeperAPIService {
         }
 
         // Small delay between batches
-        if (i + batchSize < playersToSync.length) {
+        if (i + batchSize < filteredPlayers.length) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
 
       const summary = {
-        total: playersToSync.length,
+        total: filteredPlayers.length,
         newCount,
         updatedCount,
         skippedCount,
-        message: `Sleeper sync complete: ${newCount} new players, ${updatedCount} updated, ${skippedCount} skipped`
+        message: `Sleeper sync complete: ${newCount} new players, ${updatedCount} updated, ${skippedCount} skipped (Top ${topPlayersLimit} ${positionsFilter.join('/')}-only players)`
       };
 
       console.log('✅ Sleeper sync completed:', summary);

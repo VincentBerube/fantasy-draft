@@ -6,11 +6,17 @@ interface SyncPreview {
   sleeper: {
     totalPlayers: number;
     activeFantasyPlayers: number;
+    filteredForSync: number;
   };
   current: {
     totalPlayers: number;
     draftedPlayers: number;
     playersWithNotes: number;
+  };
+  settings: {
+    positions: string[];
+    limit: number;
+    onlyActive: boolean;
   };
   message: string;
 }
@@ -56,10 +62,21 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
     loadTrendingData();
   }, []);
 
+  // Update preview when sync options change
+  useEffect(() => {
+    if (preview) { // Only update if we've loaded initial preview
+      loadPreview();
+    }
+  }, [syncOptions.positionsFilter, syncOptions.topPlayersLimit, syncOptions.onlyActive]);
+
   const loadPreview = async () => {
     setIsLoadingPreview(true);
     try {
-      const response = await sleeperApi.getSyncPreview();
+      const response = await sleeperApi.getSyncPreview({
+        onlyActive: syncOptions.onlyActive,
+        positionsFilter: syncOptions.positionsFilter,
+        topPlayersLimit: syncOptions.topPlayersLimit
+      });
       setPreview(response.data);
     } catch (error: any) {
       console.error('Failed to load preview:', error);
@@ -149,7 +166,10 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
                 <div>
                   <div className="text-gray-600">Sleeper Players:</div>
                   <div className="font-semibold text-emerald-600">
-                    {preview.sleeper.activeFantasyPlayers.toLocaleString()}
+                    {preview.sleeper.filteredForSync.toLocaleString()} filtered
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    (from {preview.sleeper.activeFantasyPlayers.toLocaleString()} eligible)
                   </div>
                 </div>
                 <div>
@@ -170,6 +190,11 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
                     {preview.current.playersWithNotes} protected
                   </div>
                 </div>
+              </div>
+              <div className="mt-3 p-2 bg-emerald-50 rounded text-xs">
+                <strong>Settings:</strong> {preview.settings.positions.join(', ')} • 
+                Top {preview.settings.limit} • 
+                {preview.settings.onlyActive ? 'Active only' : 'All players'}
               </div>
               <p className="text-sm text-gray-700 mt-3 p-3 bg-blue-50 rounded border-l-4 border-blue-400">
                 {preview.message}
@@ -414,7 +439,9 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
         <h3 className="font-medium text-gray-800 mb-3">⚡ Quick Actions</h3>
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={loadPreview}
+            onClick={() => {
+              loadPreview();
+            }}
             disabled={isLoadingPreview}
             className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50"
           >

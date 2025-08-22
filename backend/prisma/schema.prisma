@@ -32,6 +32,10 @@ model Player {
   lastSyncAt        DateTime?   // When this player was last synced from Sleeper
   dataSource        String      @default("manual") // "sleeper", "manual", "import"
   
+  // Depth chart information from Sleeper
+  depthChartPosition Int?       // 1 = starter, 2 = backup, etc.
+  depthChartOrder   Int?        // Order within the depth chart position
+  
   // Relations
   tier              Tier?       @relation(fields: [tierId], references: [id])
   playerTags        PlayerTag[]
@@ -41,6 +45,7 @@ model Player {
   @@index([sleeperId])
   @@index([dataSource])
   @@index([lastSyncAt])
+  @@index([depthChartPosition])
 }
 
 model Tag {
