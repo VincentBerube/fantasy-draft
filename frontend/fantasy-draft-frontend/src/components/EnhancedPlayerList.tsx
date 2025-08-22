@@ -277,6 +277,17 @@ export const EnhancedPlayerList: React.FC = () => {
     });
   }, [players, filters.searchTerm]);
 
+  // Update displayed players when filters change or page changes
+  useEffect(() => {
+    const endIndex = currentPage * PLAYERS_PER_PAGE;
+    setDisplayedPlayers(filteredPlayers.slice(0, endIndex));
+  }, [filteredPlayers, currentPage, PLAYERS_PER_PAGE]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters]);
+
   // Get unique values for filter dropdowns
   const positions = useMemo(() => [...new Set(players.map(p => p.position))].sort(), [players]);
   const teams = useMemo(() => [...new Set(players.map(p => p.team).filter(Boolean))].sort(), [players]);
