@@ -16,35 +16,48 @@ interface PlayerTableProps {
 }
 
 // Helper function to format depth chart information
-const formatDepthChart = (depthChartPosition?: number, depthChartOrder?: number) => {
+const formatDepthChart = (depthChartPosition?: string, depthChartOrder?: number) => {
   if (!depthChartPosition) return '';
   
-  const positions = {
-    1: 'Starter',
-    2: '2nd String', 
-    3: '3rd String',
-    4: '4th String'
+  // Map Sleeper's depth chart positions to more readable formats
+  const positionMap: Record<string, string> = {
+    'QB': 'QB',
+    'RB': 'RB', 
+    '3RB': '3rd Down RB',
+    'WR': 'WR',
+    'SWR': 'Slot WR',
+    'TE': 'TE',
+    'K': 'K',
+    'DEF': 'DEF'
   };
   
-  const basePosition = positions[depthChartPosition as keyof typeof positions] || `${depthChartPosition}th`;
+  const basePosition = positionMap[depthChartPosition] || depthChartPosition;
   
-  // If there's an order within the position (e.g., for WR1, WR2, WR3)
+  // Add order number if available (WR1, WR2, etc.)
   if (depthChartOrder && depthChartOrder > 1) {
-    return `${basePosition} #${depthChartOrder}`;
+    return `${basePosition} ${depthChartOrder}`;
   }
   
   return basePosition;
 };
 
-// Helper function to get depth chart color
-const getDepthChartColor = (depthChartPosition?: number) => {
+// Helper function to get depth chart color based on position and order
+const getDepthChartColor = (depthChartPosition?: string, depthChartOrder?: number) => {
   if (!depthChartPosition) return 'text-gray-400';
   
-  switch (depthChartPosition) {
-    case 1: return 'text-green-600 font-semibold'; // Starter - green
-    case 2: return 'text-yellow-600'; // Backup - yellow
-    case 3: return 'text-orange-600'; // 3rd string - orange
-    default: return 'text-red-600'; // Deep backup - red
+  // Special highlighting for valuable fantasy positions
+  if (depthChartPosition === 'SWR') return 'text-purple-600 font-semibold'; // Slot receivers are gold!
+  if (depthChartPosition === '3RB') return 'text-blue-600 font-semibold'; // 3rd down backs get targets
+  
+  // Color based on depth chart order
+  if (!depthChartOrder || depthChartOrder === 1) {
+    return 'text-green-600 font-semibold'; // Starter
+  } else if (depthChartOrder === 2) {
+    return 'text-yellow-600'; // Backup  
+  } else if (depthChartOrder === 3) {
+    return 'text-orange-600'; // 3rd string
+  } else {
+    return 'text-red-600'; // Deep backup
   }
 };
 
@@ -202,8 +215,8 @@ export const PlayerTable = memo(function PlayerTable({
                 <td className="px-3 py-4 whitespace-nowrap text-sm">
                   {player.depthChartPosition ? (
                     <span 
-                      className={`text-xs ${getDepthChartColor(player.depthChartPosition)}`}
-                      title={`Depth Chart Position: ${player.depthChartPosition}${player.depthChartOrder ? `, Order: ${player.depthChartOrder}` : ''}`}
+                      className={`text-xs ${getDepthChartColor(player.depthChartPosition, player.depthChartOrder)}`}
+                      title={`Depth Chart: ${player.depthChartPosition}${player.depthChartOrder ? ` #${player.depthChartOrder}` : ''}`}
                     >
                       {formatDepthChart(player.depthChartPosition, player.depthChartOrder)}
                     </span>

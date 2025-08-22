@@ -10,26 +10,6 @@ export interface SleeperSyncOptions {
   topPlayersLimit?: number;
 }
 
-export interface ConvertedPlayer {
-  name: string;
-  position: string;
-  team: string | null;
-  projectedPoints: number | null;
-  byeWeek: number | null;
-  aliases: string[];
-  userNotes: string[];
-  customTags: string[];
-  tierId: string | null;
-  isDrafted: boolean;
-  customRank: number | null;
-  sleeperId: string;
-  dataSource: string;
-  lastSyncAt: Date;
-  rank?: number;
-  depthChartPosition?: number;
-  depthChartOrder?: number;
-}
-
 export interface SleeperPlayer {
   player_id: string;
   first_name: string;
@@ -47,10 +27,10 @@ export interface SleeperPlayer {
   search_full_name: string;
   fantasy_positions: string[];
   number?: number;
-  depth_chart_position?: number;
+  depth_chart_position?: string; // Changed from number to string
   depth_chart_order?: number;
   status: string;
-  search_rank?: number; // Sleeper's internal ranking
+  search_rank?: number;
   search_first_name?: string;
   search_last_name?: string;
   hashtag?: string;
@@ -87,6 +67,26 @@ export interface SleeperTrendingPlayer {
   player_id: string;
   count: number;
   player?: SleeperPlayer;
+}
+
+export interface ConvertedPlayerData {
+  name: string;
+  position: string;
+  team: string | null;
+  projectedPoints: number | null;
+  byeWeek: number | null;
+  aliases: string[];
+  userNotes: string[];
+  customTags: string[];
+  tierId: string | null;
+  isDrafted: boolean;
+  customRank: number | null;
+  sleeperId: string;
+  dataSource: string;
+  lastSyncAt: Date;
+  rank?: number;
+  depthChartPosition?: string; // Changed from number to string
+  depthChartOrder?: number;
 }
 
 class SleeperAPIService {
@@ -204,6 +204,10 @@ class SleeperAPIService {
       throw new Error(`Failed to fetch season stats: ${error.message}`);
     }
   }
+
+  /**
+   * Get NFL state (current week, season, etc.)
+   */
   async getNFLState() {
     await this.rateLimit();
     
@@ -219,23 +223,7 @@ class SleeperAPIService {
   /**
    * Convert Sleeper player data to our Player model format
    */
-  convertToPlayerFormat(sleeperPlayer: SleeperPlayer, projections?: any): {
-    name: string;
-    position: string;
-    team: string | null;
-    projectedPoints: number | null;
-    byeWeek: number | null;
-    aliases: string[];
-    userNotes: string[];
-    customTags: string[];
-    tierId: string | null;
-    isDrafted: boolean;
-    customRank: number | null;
-    sleeperId: string;
-    dataSource: string;
-    lastSyncAt: Date;
-    rank?: number; // Add Sleeper's search rank
-  } {
+  convertToPlayerFormat(sleeperPlayer: SleeperPlayer, projections?: any): ConvertedPlayerData {
     const fullName = sleeperPlayer.full_name || 
                      `${sleeperPlayer.first_name} ${sleeperPlayer.last_name}`.trim();
     
@@ -257,7 +245,7 @@ class SleeperAPIService {
       team: sleeperPlayer.team || null,
       projectedPoints,
       byeWeek: null, // Would need to get this from another source
-      rank: sleeperPlayer.search_rank || undefined, // Sleeper's player ranking
+      rank: sleeperPlayer.search_rank || undefined,
       depthChartPosition: sleeperPlayer.depth_chart_position || undefined,
       depthChartOrder: sleeperPlayer.depth_chart_order || undefined,
       aliases: [

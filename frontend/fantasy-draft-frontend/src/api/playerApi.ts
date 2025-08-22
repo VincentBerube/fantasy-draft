@@ -51,7 +51,7 @@ export interface Player {
   playerTags: Array<{ tag: Tag }>;
   notes: Note[];
   // Depth chart fields from Sleeper
-  depthChartPosition?: number;
+  depthChartPosition?: string; // Changed from number to string
   depthChartOrder?: number;
 }
 

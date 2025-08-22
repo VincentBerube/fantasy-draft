@@ -33,8 +33,8 @@ model Player {
   dataSource        String      @default("manual") // "sleeper", "manual", "import"
   
   // Depth chart information from Sleeper
-  depthChartPosition Int?       // 1 = starter, 2 = backup, etc.
-  depthChartOrder   Int?        // Order within the depth chart position
+  depthChartPosition String?     // "QB", "RB", "SWR", "TE", etc.
+  depthChartOrder   Int?        // 1, 2, 3, 4 for order within position
   
   // Relations
   tier              Tier?       @relation(fields: [tierId], references: [id])
