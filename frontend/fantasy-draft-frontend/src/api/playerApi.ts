@@ -214,4 +214,5 @@ export const playerApi = {
   updatePlayerTags: (id: string, tags: string[]) => {
     return api.patch(`/players/${id}/tags`, { tags });
   }
+
 };
