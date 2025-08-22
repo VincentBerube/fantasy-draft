@@ -46,7 +46,9 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
     includeProjections: true,
     season: '2024',
     week: '',
-    onlyActive: true
+    onlyActive: true,
+    positionsFilter: ['QB', 'WR', 'RB', 'TE', 'K'],
+    topPlayersLimit: 500
   });
 
   useEffect(() => {
@@ -215,8 +217,59 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
                   />
                 </div>
               </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Top Players Limit:
+                </label>
+                <input
+                  type="number"
+                  min="100"
+                  max="1000"
+                  step="50"
+                  value={syncOptions.topPlayersLimit}
+                  onChange={(e) => setSyncOptions(prev => ({ ...prev, topPlayersLimit: parseInt(e.target.value) || 500 }))}
+                  className="w-full text-sm px-2 py-1 border rounded focus:ring-1 focus:ring-emerald-500"
+                  placeholder="500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Number of top fantasy players to sync</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-2">
+                  Positions to Include:
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {['QB', 'WR', 'RB', 'TE', 'K', 'DEF'].map(position => (
+                    <label key={position} className="flex items-center text-sm">
+                      <input
+                        type="checkbox"
+                        checked={syncOptions.positionsFilter.includes(position)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSyncOptions(prev => ({
+                              ...prev,
+                              positionsFilter: [...prev.positionsFilter, position]
+                            }));
+                          } else {
+                            setSyncOptions(prev => ({
+                              ...prev,
+                              positionsFilter: prev.positionsFilter.filter(p => p !== position)
+                            }));
+                          }
+                        }}
+                        className="mr-1"
+                      />
+                      {position}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Selected: {syncOptions.positionsFilter.length} positions
+                </p>
+              </div>
               
-              <div className="space-y-2">
+              <div className="space-y-2 pt-2 border-t">
                 <label className="flex items-center text-sm">
                   <input
                     type="checkbox"
@@ -378,7 +431,9 @@ export function SleeperSync({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
               includeProjections: true,
               season: '2024',
               week: '',
-              onlyActive: true
+              onlyActive: true,
+              positionsFilter: ['QB', 'WR', 'RB', 'TE', 'K'],
+              topPlayersLimit: 500
             })}
             className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
           >

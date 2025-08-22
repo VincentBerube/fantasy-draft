@@ -11,6 +11,8 @@ export interface SyncOptions {
   season?: string;
   week?: number;
   onlyActive?: boolean;
+  positionsFilter?: string[];
+  topPlayersLimit?: number;
 }
 
 export interface SyncPreview {

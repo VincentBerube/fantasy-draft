@@ -1,6 +1,15 @@
 // backend/src/services/sleeper-api.service.ts
 import axios from 'axios';
 
+export interface SleeperSyncOptions {
+  includeProjections?: boolean;
+  season?: string;
+  week?: number;
+  onlyActive?: boolean;
+  positionsFilter?: string[];
+  topPlayersLimit?: number;
+}
+
 export interface SleeperPlayer {
   player_id: string;
   first_name: string;

@@ -1,6 +1,6 @@
 // backend/src/routes/sleeper.route.ts
 import { Router } from 'express';
-import { sleeperAPIService } from '../services/sleeper-api.service';
+import { sleeperAPIService, SleeperSyncOptions } from '../services/sleeper-api.service';
 import { prisma } from '../database';
 
 const router = Router();
@@ -15,15 +15,21 @@ router.post('/sync', async (req, res) => {
       includeProjections = true, 
       season = '2024', 
       week,
-      onlyActive = true 
+      onlyActive = true,
+      positionsFilter = ['QB', 'WR', 'RB', 'TE', 'K'],
+      topPlayersLimit = 500
     } = req.body;
 
-    const result = await sleeperAPIService.syncPlayersToDatabase(prisma, {
+    const syncOptions: SleeperSyncOptions = {
       includeProjections,
       season,
       week: week ? parseInt(week) : undefined,
-      onlyActive
-    });
+      onlyActive,
+      positionsFilter,
+      topPlayersLimit: parseInt(topPlayersLimit.toString())
+    };
+
+    const result = await sleeperAPIService.syncPlayersToDatabase(prisma, syncOptions);
 
     res.json({
       success: true,
