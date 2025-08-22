@@ -3,7 +3,7 @@ import { useState } from 'react';
 import './index.css';
 import { EnhancedPlayerImport } from './components/EnhancedPlayerImport';
 import { SleeperSync } from './components/SleeperSync';
-import { PlayerList } from './components/PlayerList/';
+import { EnhancedPlayerList } from './components/EnhancedPlayerList';
 
 function App() {
   const [refreshKey, setRefreshKey] = useState(0);
@@ -76,8 +76,8 @@ function App() {
             )}
           </div>
 
-          {/* Player List */}
-          <PlayerList key={refreshKey} />
+          {/* Enhanced Player List */}
+          <EnhancedPlayerList key={refreshKey} />
         </div>
       </main>
       

@@ -32,6 +32,12 @@ export const EnhancedPlayerList: React.FC = () => {
   const [pendingUpdates, setPendingUpdates] = useState<Set<string>>(new Set());
   const [showImport, setShowImport] = useState(false);
   
+  // Pagination state
+  const [displayedPlayers, setDisplayedPlayers] = useState<Player[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const PLAYERS_PER_PAGE = 50;
+  
   // Filters
   const [filters, setFilters] = useState({
     position: '',
@@ -276,6 +282,26 @@ export const EnhancedPlayerList: React.FC = () => {
   const teams = useMemo(() => [...new Set(players.map(p => p.team).filter(Boolean))].sort(), [players]);
   const dataSources = useMemo(() => [...new Set(players.map(p => p.dataSource))].sort(), [players]);
 
+  // Load more players
+  const handleLoadMore = useCallback(async () => {
+    setIsLoadingMore(true);
+    
+    // Simulate network delay for better UX
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    setCurrentPage(prev => prev + 1);
+    setIsLoadingMore(false);
+  }, []);
+
+  // Check if there are more players to load
+  const hasMorePlayers = useMemo(() => {
+    return displayedPlayers.length < filteredPlayers.length;
+  }, [displayedPlayers.length, filteredPlayers.length]);
+
+  const remainingPlayers = useMemo(() => {
+    return filteredPlayers.length - displayedPlayers.length;
+  }, [filteredPlayers.length, displayedPlayers.length]);
+
   if (isLoading && players.length === 0) {
     return (
       <div className="flex justify-center py-12">
@@ -494,7 +520,7 @@ export const EnhancedPlayerList: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredPlayers.map(player => (
+              {displayedPlayers.map(player => (
                 <PlayerRow
                   key={player.id}
                   player={player}
@@ -512,6 +538,29 @@ export const EnhancedPlayerList: React.FC = () => {
           </table>
         </div>
 
+        {/* Load More Button */}
+        {hasMorePlayers && (
+          <div className="px-6 py-4 bg-gray-50 border-t text-center">
+            <button
+              onClick={handleLoadMore}
+              disabled={isLoadingMore}
+              className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+            >
+              {isLoadingMore ? (
+                <span className="flex items-center justify-center">
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Loading...
+                </span>
+              ) : (
+                `Load More (${remainingPlayers} remaining)`
+              )}
+            </button>
+          </div>
+        )}
+
         {filteredPlayers.length === 0 && !isLoading && (
           <div className="text-center py-12">
             <p className="text-gray-500">No players found matching current filters.</p>
@@ -521,7 +570,10 @@ export const EnhancedPlayerList: React.FC = () => {
 
       {/* Footer Info */}
       <div className="text-center text-sm text-gray-500">
-        Showing {filteredPlayers.length} of {players.length} players
+        Showing {displayedPlayers.length} of {filteredPlayers.length} players
+        {filteredPlayers.length !== players.length && (
+          <span className="text-blue-600"> (filtered from {players.length} total)</span>
+        )}
         {pendingUpdates.size > 0 && (
           <span className="ml-2 text-yellow-600">
             • {pendingUpdates.size} pending update{pendingUpdates.size !== 1 ? 's' : ''}

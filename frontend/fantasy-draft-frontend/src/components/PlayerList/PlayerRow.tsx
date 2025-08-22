@@ -140,11 +140,11 @@ export const PlayerRow = memo(function PlayerRow({
             <div className="flex items-center space-x-1 mt-1">
               {/* Data source indicator */}
               <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium ${
-                getDataSourceColor(player.dataSource)
+                getDataSourceColor(player.dataSource || 'manual')
               }`}>
                 {player.dataSource === 'sleeper' ? '🏈' : 
                  player.dataSource === 'excel' ? '📊' : '✏️'}
-                {player.dataSource}
+                {player.dataSource || 'manual'}
               </span>
               
               {/* Sleeper ID indicator */}
@@ -220,7 +220,7 @@ export const PlayerRow = memo(function PlayerRow({
       {/* Tags */}
       <td className="px-3 py-4 whitespace-nowrap">
         <div className="flex flex-wrap gap-1">
-          {player.playerTags.map(pt => (
+          {player.playerTags && player.playerTags.map(pt => (
             <span
               key={pt.tag.id}
               className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
@@ -242,10 +242,10 @@ export const PlayerRow = memo(function PlayerRow({
         <button
           onClick={() => onShowNotes(player.id)}
           className="text-blue-600 hover:text-blue-900 disabled:opacity-50"
-          title={player.notes.length > 0 ? `${player.notes.length} note(s)` : 'Add notes'}
+          title={player.notes && player.notes.length > 0 ? `${player.notes.length} note(s)` : 'Add notes'}
           disabled={isPending}
         >
-          {player.notes.length > 0 ? 
+          {player.notes && player.notes.length > 0 ? 
             `📝 ${player.notes.length}` : 
             '📝 Add'
           }
