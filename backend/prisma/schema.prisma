@@ -9,89 +9,122 @@ datasource db {
 }
 
 model Player {
-  id                String      @id @default(uuid())
-  name              String
-  position          String
-  team              String?
-  rank              Int?
-  positionalRank    String?
-  adp               Float?
-  vorp              Float?
-  projectedPoints   Float?
-  lastSeasonPoints  Float?
-  byeWeek           Int?
-  userNotes         String[]    @default([])
-  customTags        String[]    @default([])
-  tierId            String?
-  isDrafted         Boolean     @default(false)
-  customRank        Int?
-  aliases           String[]    @default([])
+  id                  String        @id @default(cuid())
+  name                String
+  position            String
+  team                String?
+  rank                Int?
+  customRank          Int?
+  positionalRank      String?
+  projectedPoints     Float?
+  vorp                Float?
+  adp                 Float?
+  byeWeek             Int?
+  tierId              String?
+  tier                Tier?         @relation(fields: [tierId], references: [id], onDelete: SetNull)
+  isDrafted           Boolean       @default(false)
+  aliases             String[]      @default([])
+  userNotes           String[]      @default([])
+  customTags          String[]      @default([])
+  playerTags          PlayerTag[]
+  notes               Note[]
+  depthChartPosition  String?       // Sleeper depth chart position
+  depthChartOrder     Int?          // Sleeper depth chart order
   
   // Sleeper integration fields
-  sleeperId         String?     // Sleeper player ID for syncing
-  lastSyncAt        DateTime?   // When this player was last synced from Sleeper
-  dataSource        String      @default("manual") // "sleeper", "manual", "import"
+  sleeperId           String?       // Sleeper's unique ID for this player
+  dataSource          String        @default("manual") // 'sleeper', 'excel', 'manual'
+  lastSyncAt          DateTime?     // When this player was last updated
   
-  // Depth chart information from Sleeper
-  depthChartPosition String?     // "QB", "RB", "SWR", "TE", etc.
-  depthChartOrder   Int?        // 1, 2, 3, 4 for order within position
+  // Import tracking
+  importSessionId     String?       // Track which import session created/modified this player
   
-  // Relations
-  tier              Tier?       @relation(fields: [tierId], references: [id])
-  playerTags        PlayerTag[]
-  notes             Note[]
-  
-  @@unique([name, position])
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
   @@index([sleeperId])
   @@index([dataSource])
   @@index([lastSyncAt])
-  @@index([depthChartPosition])
+  @@index([importSessionId])
+  @@index([position])
+  @@index([team])
+  @@index([isDrafted])
+  @@map("Player")
+}
+
+model Tier {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  color     String    @default("#8B5CF6")
+  order     Int       // For sorting tiers
+  players   Player[]
+  createdAt DateTime  @default(now())
+
+  @@index([order])
+  @@map("Tier")
 }
 
 model Tag {
-  id          String      @id @default(uuid())
-  name        String      @unique
-  color       String      @default("#3B82F6")
-  createdAt   DateTime    @default(now())
-  
-  // Relations
-  playerTags  PlayerTag[]
+  id         String      @id @default(cuid())
+  name       String      @unique
+  color      String      @default("#3B82F6")
+  playerTags PlayerTag[]
+  createdAt  DateTime    @default(now())
+
+  @@map("Tag")
 }
 
 model PlayerTag {
-  id        String   @id @default(uuid())
-  playerId  String
-  tagId     String
+  id       String   @id @default(cuid())
+  playerId String
+  player   Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  tagId    String
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
-  
-  // Relations
-  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  
+
   @@unique([playerId, tagId])
+  @@map("PlayerTag")
 }
 
 model Note {
-  id        String   @id @default(uuid())
+  id        String   @id @default(cuid())
   playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
   content   String
   color     String   @default("#6B7280")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
-  // Relations
-  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@map("Note")
 }
 
-model Tier {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  color     String   @default("#8B5CF6")
-  order     Int
-  createdAt DateTime @default(now())
+model ImportSession {
+  id         String   @id @default(cuid())
+  summary    Json     // Store import summary stats
+  changes    Json     // Store detailed changes for rollback
+  rolledBack Boolean  @default(false)
+  createdAt  DateTime @default(now())
   
-  // Relations
-  players   Player[]
-  
-  @@index([order])
+  @@index([createdAt])
+  @@index([rolledBack])
+  @@map("ImportSession")
+}
+
+model SyncLog {
+  id           String   @id @default(cuid())
+  source       String   // 'sleeper', 'excel', etc.
+  operation    String   // 'sync', 'import', etc.
+  status       String   // 'success', 'error', 'partial'
+  totalCount   Int      @default(0)
+  newCount     Int      @default(0)
+  updatedCount Int      @default(0)
+  errorCount   Int      @default(0)
+  message      String?
+  details      Json?    // Additional details about the sync
+  createdAt    DateTime @default(now())
+  duration     Int?     // Duration in milliseconds
+
+  @@index([source])
+  @@index([createdAt])
+  @@map("SyncLog")
 }

@@ -78,14 +78,27 @@ export const playerApi = {
     });
   },
 
-  // Resolve manual match
-  resolveManualMatch: (data: {
-    excelRowIndex: number;
-    selectedPlayerId: string;
-    excelData: Record<string, any>;
-    options?: ImportOptions;
-  }) => {
-    return api.post('/players/import/resolve-match', data);
+  // Advanced import with detailed control
+  getAdvancedImportPreview: (formData: FormData) => {
+    return api.post('/players/import/advanced-preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  executeAdvancedImport: (formData: FormData) => {
+    return api.post('/players/import/advanced-execute', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  rollbackImport: (sessionId: string) => {
+    return api.post(`/players/import/rollback/${sessionId}`);
+  },
+
+  getImportHistory: (limit?: number) => {
+    return api.get('/players/import/history', {
+      params: { limit }
+    });
   },
   
   // Enhanced player fetching with filters
@@ -214,5 +227,4 @@ export const playerApi = {
   updatePlayerTags: (id: string, tags: string[]) => {
     return api.patch(`/players/${id}/tags`, { tags });
   }
-
 };
