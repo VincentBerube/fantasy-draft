@@ -1,6 +1,4 @@
 // backend/prisma/schema.prisma
-// Add these changes to your existing schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,7 +8,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Update your existing Player model to include importSessionId
 model Player {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now())
@@ -24,10 +21,12 @@ model Player {
   // Rankings and projections
   rank            Int?
   customRank      Int?
+  positionalRank  String?      // Added missing field
   projectedPoints Float?
   vorp            Float?
   adp             Float?
   byeWeek         Int?
+  lastSeasonPoints Float?      // Added missing field
   
   // Sleeper integration
   sleeperId   String?  @unique
@@ -49,20 +48,19 @@ model Player {
   depthChartPosition     String?
   depthChartOrder        Int?
   
-  // NEW FIELD FOR IMPORT TRACKING
-  importSessionId String?  // Track which import session created/modified this player
+  // Import tracking
+  importSessionId String?
 
   @@map("players")
 }
 
-// NEW MODEL: Import Session tracking
 model ImportSession {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
-  summary    Json     // Summary statistics of the import
-  changes    Json     // Detailed list of changes made
+  summary    Json
+  changes    Json
   rolledBack Boolean  @default(false)
   
   @@map("import_sessions")
@@ -107,7 +105,7 @@ model Note {
   updatedAt DateTime @updatedAt
   
   content  String
-  color    String   @default("#yellow")
+  color    String   @default("#6B7280")
   playerId String
 
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)

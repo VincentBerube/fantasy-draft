@@ -15,8 +15,10 @@ export interface Player {
   byeWeek: number | null;
   rank: number | null;
   customRank: number | null;
+  positionalRank: string | null;  // Added missing field
   vorp: number | null;
   adp: number | null;
+  lastSeasonPoints: number | null;  // Added missing field
   aliases: string[];
   isDrafted: boolean;
   tierId: string | null;
@@ -130,8 +132,26 @@ export const playerApi = {
     return api.put(`/players/${id}`, data);
   },
 
+  // Add missing updatePlayerQuick method
+  updatePlayerQuick: (id: string, data: Partial<Player>) => {
+    return api.put(`/players/${id}`, data);
+  },
+
   deletePlayer: (id: string) => {
     return api.delete(`/players/${id}`);
+  },
+
+  // Draft operations
+  toggleDraftStatus: (playerId: string, isDrafted: boolean) => {
+    return api.put(`/players/${playerId}`, { isDrafted });
+  },
+
+  draftPlayer: (playerId: string, data?: { position?: number; round?: number }) => {
+    return api.post(`/players/${playerId}/draft`, data);
+  },
+
+  undraftPlayer: (playerId: string) => {
+    return api.post(`/players/${playerId}/undraft`);
   },
 
   // Enhanced import with smart matching (Simple mode)
@@ -168,6 +188,16 @@ export const playerApi = {
     });
   },
 
+  // Manual matching resolution
+  resolveManualMatch: (data: {
+    excelRowIndex: number;
+    selectedPlayerId: string;
+    excelData: Record<string, any>;
+    options: any;
+  }) => {
+    return api.post('/players/resolve-manual-match', data);
+  },
+
   // Import management
   rollbackImport: (sessionId: string) => {
     return api.post(`/players/import/rollback/${sessionId}`);
@@ -198,6 +228,11 @@ export const playerApi = {
 
   deleteTier: (id: string) => {
     return api.delete(`/tiers/${id}`);
+  },
+
+  // Add missing assignPlayerToTier method
+  assignPlayerToTier: (playerId: string, tierId: string | null) => {
+    return api.put(`/players/${playerId}`, { tierId });
   },
 
   // Player tags
@@ -239,15 +274,6 @@ export const playerApi = {
     return api.delete(`/players/${playerId}/notes/${noteId}`);
   },
 
-  // Draft operations
-  draftPlayer: (playerId: string, data?: { position?: number; round?: number }) => {
-    return api.post(`/players/${playerId}/draft`, data);
-  },
-
-  undraftPlayer: (playerId: string) => {
-    return api.post(`/players/${playerId}/undraft`);
-  },
-
   // Bulk operations
   bulkUpdatePlayers: (playerIds: string[], data: Partial<Player>) => {
     return api.post('/players/bulk-update', { playerIds, data });
@@ -274,8 +300,8 @@ export const playerApi = {
   },
 
   // Statistics and analytics
-  getPlayerStats: (playerId: string) => {
-    return api.get(`/players/${playerId}/stats`);
+  getPlayerStats: () => {
+    return api.get('/players/stats');
   },
 
   getPositionStats: (position: string) => {
@@ -296,8 +322,8 @@ export const playerApi = {
     return api.post('/players/sleeper-sync', options);
   },
 
-  // Export functionality
-  exportPlayers: (format: 'csv' | 'excel' | 'json', filters?: any) => {
+  // Export functionality - fix the missing format parameter
+  exportPlayers: (format: 'csv' | 'excel' | 'json' = 'excel', filters?: any) => {
     return api.get('/players/export', {
       params: { format, ...filters },
       responseType: 'blob'

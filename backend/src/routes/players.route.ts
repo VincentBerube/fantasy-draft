@@ -1,14 +1,16 @@
-// backend/src/routes/players.routes.ts
+// backend/src/routes/players.route.ts
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import { PrismaClient } from '@prisma/client';
 import { EnhancedPlayerImportService } from '../services/enhanced-player-import.service';
 import { AdvancedImportService } from '../services/advanced-import.service';
+import { PlayerService } from '../services/player.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
 const router = Router();
 const prisma = new PrismaClient();
+const playerService = new PlayerService(prisma);
 
 // Configure multer for file uploads
 const upload = multer({
@@ -194,6 +196,135 @@ router.delete('/:id', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'Failed to delete player',
+      details: error.message
+    });
+  }
+});
+
+// =============================================================================
+// MANUAL MATCH RESOLUTION
+// =============================================================================
+
+// Add missing resolve manual match endpoint
+router.post('/resolve-manual-match', async (req: Request, res: Response) => {
+  try {
+    const result = await playerService.resolveManualMatch(req.body);
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error: any) {
+    console.error('Failed to resolve manual match:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to resolve manual match',
+      details: error.message
+    });
+  }
+});
+
+// =============================================================================
+// TIER MANAGEMENT  
+// =============================================================================
+
+// Get all tiers
+router.get('/tiers', async (req: Request, res: Response) => {
+  try {
+    const tiers = await playerService.getTiers();
+    res.json({
+      success: true,
+      data: tiers
+    });
+  } catch (error: any) {
+    console.error('Failed to get tiers:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get tiers',
+      details: error.message
+    });
+  }
+});
+
+// =============================================================================
+// TAG MANAGEMENT
+// =============================================================================
+
+// Get all tags
+router.get('/tags', async (req: Request, res: Response) => {
+  try {
+    const tags = await playerService.getTags();
+    res.json({
+      success: true,
+      data: tags
+    });
+  } catch (error: any) {
+    console.error('Failed to get tags:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get tags',
+      details: error.message
+    });
+  }
+});
+
+// =============================================================================
+// STATISTICS AND ANALYTICS
+// =============================================================================
+
+// Get player statistics
+router.get('/stats', async (req: Request, res: Response) => {
+  try {
+    const stats = await prisma.player.groupBy({
+      by: ['position'],
+      _count: {
+        id: true
+      },
+      _avg: {
+        projectedPoints: true,
+        rank: true
+      }
+    });
+
+    const totalPlayers = await prisma.player.count();
+    const draftedPlayers = await prisma.player.count({
+      where: { isDrafted: true }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        totalPlayers,
+        draftedPlayers,
+        undraftedPlayers: totalPlayers - draftedPlayers,
+        byPosition: stats
+      }
+    });
+  } catch (error: any) {
+    console.error('Failed to get player stats:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get player stats',
+      details: error.message
+    });
+  }
+});
+
+// Export players
+router.get('/export', async (req: Request, res: Response) => {
+  try {
+    const { format = 'excel' } = req.query;
+    const workbook = await playerService.exportPlayers();
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="fantasy-players.xlsx"');
+    
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error: any) {
+    console.error('Failed to export players:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to export players',
       details: error.message
     });
   }
@@ -394,7 +525,7 @@ router.get('/import/history', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      history
+      data: history
     });
   } catch (error: any) {
     console.error('Failed to get import history:', error);
@@ -409,12 +540,16 @@ router.get('/import/history', async (req: Request, res: Response) => {
 // Get import statistics
 router.get('/import/stats', async (req: Request, res: Response) => {
   try {
-    const importService = new EnhancedPlayerImportService(prisma);
-    const stats = await importService.getImportStats();
+    const stats = await prisma.importSession.groupBy({
+      by: ['rolledBack'],
+      _count: {
+        id: true
+      }
+    });
 
     res.json({
       success: true,
-      stats
+      data: stats
     });
   } catch (error: any) {
     console.error('Failed to get import stats:', error);
@@ -440,7 +575,6 @@ router.post('/:id/draft', async (req: Request, res: Response) => {
       where: { id },
       data: { 
         isDrafted: true,
-        // You can add draftPosition and draftRound fields if needed
       },
       include: {
         tier: true,
@@ -448,7 +582,8 @@ router.post('/:id/draft', async (req: Request, res: Response) => {
           include: {
             tag: true
           }
-        }
+        },
+        notes: true
       }
     });
 
@@ -480,7 +615,8 @@ router.post('/:id/undraft', async (req: Request, res: Response) => {
           include: {
             tag: true
           }
-        }
+        },
+        notes: true
       }
     });
 
@@ -493,6 +629,50 @@ router.post('/:id/undraft', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'Failed to undraft player',
+      details: error.message
+    });
+  }
+});
+
+// =============================================================================
+// TIER MANAGEMENT
+// =============================================================================
+
+// Get all tiers
+router.get('/tiers', async (req: Request, res: Response) => {
+  try {
+    const tiers = await playerService.getTiers();
+    res.json({
+      success: true,
+      data: tiers
+    });
+  } catch (error: any) {
+    console.error('Failed to get tiers:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get tiers',
+      details: error.message
+    });
+  }
+});
+
+// =============================================================================
+// TAG MANAGEMENT
+// =============================================================================
+
+// Get all tags
+router.get('/tags', async (req: Request, res: Response) => {
+  try {
+    const tags = await playerService.getTags();
+    res.json({
+      success: true,
+      data: tags
+    });
+  } catch (error: any) {
+    console.error('Failed to get tags:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get tags',
       details: error.message
     });
   }
@@ -597,7 +777,8 @@ router.get('/search', async (req: Request, res: Response) => {
           include: {
             tag: true
           }
-        }
+        },
+        notes: true
       },
       orderBy: [
         { rank: 'asc' },

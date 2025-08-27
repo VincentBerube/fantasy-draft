@@ -58,7 +58,11 @@ export function PlayerList() {
   const fetchPlayers = async () => {
     try {
       setIsLoading(true);
-      const response = await playerApi.getPlayers('PPR', !hideDrafted);
+      // Fix: Use proper filter parameters instead of positional arguments
+      const response = await playerApi.getPlayers({ 
+        scoring: 'PPR', 
+        includeDrafted: !hideDrafted 
+      });
       setPlayers(response.data);
       setError('');
     } catch (err) {
@@ -100,31 +104,26 @@ export function PlayerList() {
     setPendingUpdates(prev => new Set(prev).add(`${playerId}-${field}`));
     
     const endTime = performance.now();
-    console.log(`✅ Optimistic update took ${endTime - startTime}ms`);
+    console.log(`✅ Optimistic update completed in ${endTime - startTime}ms`);
   }, []);
 
-  // ACTUAL API CALL - with error handling and fast endpoint
+  // DEBOUNCED API CALL - reduce server load with fast endpoint
   const performPlayerUpdate = useCallback(async (playerId: string, field: string, value: any) => {
-    console.log('🚀 STARTING API CALL:', { playerId, field, value });
+    console.log('💾 API UPDATE:', { playerId, field, value });
     const startTime = performance.now();
     
     try {
       const updateData: any = {};
       updateData[field] = value;
       
-      // Use fast endpoint for simple field updates (MAJOR PERFORMANCE IMPROVEMENT)
-      const fastUpdateFields = ['customRank', 'projectedPoints', 'vorp', 'adp', 'rank'];
+      // Use fast endpoint for simple field updates
+      const fastUpdateFields = ['customRank', 'projectedPoints', 'vorp', 'adp', 'rank', 'byeWeek'];
       
       if (fastUpdateFields.includes(field)) {
-        console.log('🏃‍♂️ Using FAST endpoint for field:', field);
         await playerApi.updatePlayerQuick(playerId, updateData);
       } else {
-        console.log('🐌 Using SLOW endpoint for field:', field);
         await playerApi.updatePlayer(playerId, updateData);
       }
-      
-      const endTime = performance.now();
-      console.log(`✅ API call completed in ${endTime - startTime}ms`);
       
       // Remove from pending on success
       setPendingUpdates(prev => {
@@ -134,9 +133,10 @@ export function PlayerList() {
       });
       
       setError('');
-    } catch (error) {
       const endTime = performance.now();
-      console.error(`❌ API call failed after ${endTime - startTime}ms:`, error);
+      console.log(`✅ API update completed in ${endTime - startTime}ms`);
+    } catch (error) {
+      console.error('Update failed:', error);
       setError('Failed to update player');
       
       // Revert optimistic update on error
@@ -148,17 +148,15 @@ export function PlayerList() {
         return newSet;
       });
     }
-  }, []);
+  }, [fetchPlayers]);
 
-  // DEBOUNCED VERSION - reduces API calls dramatically
-  const debouncedUpdate = useDebounce(performPlayerUpdate, 500); // 500ms delay
+  const debouncedUpdate = useDebounce(performPlayerUpdate, 500);
 
-  // OPTIMIZED HANDLE CELL EDIT - this replaces your slow version
+  // Handle cell edit with optimistic updates
   const handleCellEdit = useCallback((playerId: string, field: string, value: any) => {
-    console.log('🎯 HANDLE CELL EDIT CALLED:', { playerId, field, value });
     const startTime = performance.now();
     
-    // IMMEDIATE UI update for instant feedback (no lag!)
+    // Immediate UI update for instant feedback
     updatePlayerOptimistically(playerId, field, value);
     
     // DEBOUNCED API call to reduce server load (fast endpoint!)
@@ -201,9 +199,9 @@ export function PlayerList() {
 
   const handleAssignTier = async (playerId: string, tierId: string | null) => {
     try {
-      // Optimistic update - use correct field name
+      // Optimistic update - fix tierId type mismatch
       setPlayers(prev => prev.map(p => 
-        p.id === playerId ? { ...p, tierId: tierId || undefined } : p
+        p.id === playerId ? { ...p, tierId: tierId } : p
       ));
       
       await playerApi.assignPlayerToTier(playerId, tierId);
@@ -219,7 +217,8 @@ export function PlayerList() {
   const handleExport = async () => {
     try {
       setIsExporting(true);
-      const response = await playerApi.exportPlayers();
+      // Fix: Pass format parameter as required
+      const response = await playerApi.exportPlayers('excel');
       const blob = response.data;
       
       const url = window.URL.createObjectURL(blob);
@@ -239,7 +238,7 @@ export function PlayerList() {
     }
   };
 
-  const getTierInfo = (tierId: string | undefined): Tier | null => {
+  const getTierInfo = (tierId: string | null): Tier | null => {
     if (!tierId) return null;
     return tiers.find(t => t.id === tierId) || null;
   };
@@ -247,140 +246,132 @@ export function PlayerList() {
   const groupPlayersByTier = () => {
     const grouped = new Map<string, Player[]>();
     
-    // Use tierId for grouping (the foreign key field)
+    // Use 'No Tier' for players without tiers
+    const noTierKey = 'no-tier';
+    grouped.set(noTierKey, []);
+    
+    // Group tiers by their order
+    tiers.forEach(tier => {
+      grouped.set(tier.id, []);
+    });
+    
     filteredPlayers.forEach(player => {
-      const tierKey = player.tierId || 'no-tier';
-      if (!grouped.has(tierKey)) {
-        grouped.set(tierKey, []);
+      const key = player.tierId || noTierKey;
+      if (!grouped.has(key)) {
+        grouped.set(key, []);
       }
-      grouped.get(tierKey)!.push(player);
+      grouped.get(key)!.push(player);
     });
     
-    const sortedGroups = Array.from(grouped.entries()).sort(([aTier], [bTier]) => {
-      if (aTier === 'no-tier') return 1;
-      if (bTier === 'no-tier') return -1;
-      
-      const tierA = tiers.find(t => t.id === aTier);
-      const tierB = tiers.find(t => t.id === bTier);
-      
-      return (tierA?.order || 999) - (tierB?.order || 999);
-    });
+    // Remove empty groups
+    for (const [key, players] of grouped) {
+      if (players.length === 0) {
+        grouped.delete(key);
+      }
+    }
     
-    return sortedGroups;
+    return grouped;
   };
+
+  const draftedCount = players.filter(p => p.isDrafted).length;
+  const undraftedCount = players.filter(p => !p.isDrafted).length;
+  const totalCount = players.length;
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="text-center py-12">
+          <div className="text-xl">Loading players...</div>
+        </div>
       </div>
     );
   }
 
-  const tierGroups = groupPlayersByTier();
-  const draftedCount = players.filter(p => p.isDrafted).length;
-
   return (
-    <div className="mt-8">
+    <div className="max-w-7xl mx-auto p-6">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Fantasy Draft Board</h1>
+          <div className="text-sm text-gray-600 mt-1">
+            {totalCount} total • {draftedCount} drafted • {undraftedCount} available
+          </div>
+        </div>
+        
+        <div className="flex space-x-3">
+          {/* Export Button */}
+          <button 
+            onClick={handleExport}
+            disabled={isExporting || totalCount === 0}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+          >
+            {isExporting ? (
+              <>
+                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                <span>Exporting...</span>
+              </>
+            ) : (
+              <>
+                <span>📥</span>
+                <span>Export</span>
+              </>
+            )}
+          </button>
+          
+          <button 
+            onClick={() => setShowTagManager(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            🏷️ Tags
+          </button>
+          
+          <button 
+            onClick={() => setShowTierManager(true)}
+            className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+          >
+            🎯 Tiers
+          </button>
+        </div>
+      </div>
+
+      {/* Error Display */}
       {error && (
-        <div className="bg-red-100 text-red-700 p-4 rounded-lg text-center mb-6 border border-red-200">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
           {error}
         </div>
       )}
 
-      {/* Show pending updates indicator */}
-      {pendingUpdates.size > 0 && (
-        <div className="bg-blue-100 text-blue-700 p-2 rounded-lg text-center mb-4 border border-blue-200">
-          💾 Saving {pendingUpdates.size} update(s)...
-        </div>
-      )}
-
-      {/* Header controls */}
-      <div className="mb-6 flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">
-          Fantasy Draft Players ({filteredPlayers.length})
-        </h2>
-        
-        <div className="flex space-x-3">
-          <button
-            onClick={() => setShowTagManager(true)}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-          >
-            Manage Tags
-          </button>
-          
-          <button
-            onClick={() => setShowTierManager(true)}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-          >
-            Manage Tiers
-          </button>
-          
-          <button
-            onClick={handleExport}
-            disabled={isExporting}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {isExporting ? 'Exporting...' : 'Export to Excel'}
-          </button>
-        </div>
-      </div>
-
       {/* Filters */}
-      <PlayerFilters 
+      <PlayerFilters
         {...filterProps}
-        tags={tags}
-        tiers={tiers}
         draftedCount={draftedCount}
+        tiers={tiers}
+        tags={tags}
       />
 
-      {/* Player Tables - uses existing PlayerTable component */}
-      <div className="space-y-8">
-        {tierGroups.map(([tierKey, tierPlayers]) => {
-          const tierInfo = getTierInfo(tierKey === 'no-tier' ? undefined : tierKey);
-          
-          return (
-            <PlayerTable
-              key={tierKey}
-              tierInfo={tierInfo}
-              players={tierPlayers}
-              tiers={tiers}
-              onToggleDrafted={handleToggleDrafted}
-              onAssignTier={handleAssignTier}
-              onEditCell={handleCellEdit}
-              onDelete={handleDeletePlayer}
-              onShowDetail={setSelectedPlayerId}
-              onShowNotes={setShowNoteManager}
-            />
-          );
-        })}
-      </div>
-
-      {/* Show message when no players match filters */}
-      {filteredPlayers.length === 0 && !isLoading && (
-        <div className="text-center py-12 text-gray-500">
-          {players.length === 0 ? (
-            <div>
-              <p className="text-lg mb-4">No players found</p>
-              <p className="text-sm">Import some players to get started!</p>
-            </div>
-          ) : (
-            <div>
-              <p className="text-lg mb-4">No players match your current filters</p>
-              <p className="text-sm">Try adjusting your search criteria</p>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Player Table */}
+      <PlayerTable
+        players={filteredPlayers}
+        tiers={tiers}
+        tags={tags}
+        onCellEdit={handleCellEdit}
+        onToggleDrafted={handleToggleDrafted}
+        onAssignTier={handleAssignTier}
+        onDeletePlayer={handleDeletePlayer}
+        onPlayerClick={setSelectedPlayerId}
+        onShowNotes={setShowNoteManager}
+        getTierInfo={getTierInfo}
+        pendingUpdates={pendingUpdates}
+      />
 
       {/* Modals */}
       {selectedPlayerId && (
-        <PlayerDetail 
+        <PlayerDetail
           playerId={selectedPlayerId}
           onClose={() => setSelectedPlayerId(null)}
         />
       )}
-      
+
       {showTagManager && (
         <TagManager
           tags={tags}
@@ -392,7 +383,7 @@ export function PlayerList() {
           }}
         />
       )}
-      
+
       {showTierManager && (
         <TierManager
           tiers={tiers}
@@ -403,12 +394,12 @@ export function PlayerList() {
           }}
         />
       )}
-      
+
       {showNoteManager && (
         <NoteManager
           playerId={showNoteManager}
           onClose={() => setShowNoteManager(null)}
-          onUpdate={fetchPlayers}
+          onUpdate={() => fetchPlayers()}
         />
       )}
     </div>
