@@ -16,9 +16,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor for error handling
+// Response interceptor for error handling and unwrapping success responses
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Auto-unwrap successful responses that have the { success: true, data: ... } structure
+    if (response.data && response.data.success === true && response.data.data !== undefined) {
+      return { ...response, data: response.data.data };
+    }
+    return response;
+  },
   (error) => {
     console.error('API Error:', error.response?.data || error.message);
     return Promise.reject(error);
@@ -196,39 +202,48 @@ export const playerApi = {
     return api.put(`/players/${playerId}`, { isDrafted });
   },
 
+  draftPlayer: (playerId: string, data?: { position?: number; round?: number }) => {
+    return api.post(`/players/${playerId}/draft`, data);
+  },
+
+  undraftPlayer: (playerId: string) => {
+    return api.post(`/players/${playerId}/undraft`);
+  },
+
   // Import/Export operations
   importFromExcel: (formData: FormData, mergeStrategy: "update" | "preserve" = "update") => {
     return api.post('/players/import/excel', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      params: { mergeStrategy }, // Pass as query parameter
-      timeout: 60000, // 1 minute for large files
+      params: { mergeStrategy },
+      timeout: 60000,
     });
   },
 
-  // Enhanced import with smart matching (Simple mode)
-  importPlayers: (formData: FormData) => {
+  // Enhanced import methods
+  importPlayers: (file: File, mergeStrategy: "update" | "preserve" = "update") => {
+    const formData = new FormData();
+    formData.append('file', file);
     return api.post('/players/import', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      params: { mergeStrategy },
+      timeout: 60000,
     });
   },
 
-  // Get import preview (Simple mode)
   getImportPreview: (formData: FormData) => {
     return api.post('/players/import/preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
 
-  // Execute enhanced import (Simple mode)
   executeEnhancedImport: (formData: FormData) => {
     return api.post('/players/import/enhanced-execute', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
 
-  // Advanced import with detailed control (Advanced mode)
   getAdvancedImportPreview: (formData: FormData) => {
     return api.post('/players/import/advanced-preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -266,13 +281,15 @@ export const playerApi = {
   },
 
   exportToExcel: () => {
-    return api.get('/players/export/excel', {
+    return api.get('/players/export', {
+      params: { format: 'excel' },
       responseType: 'blob'
     });
   },
 
   exportPlayers: (format: string = 'excel') => {
-    return api.get(`/players/export/${format}`, {
+    return api.get('/players/export', {
+      params: { format },
       responseType: 'blob'
     });
   },
@@ -285,8 +302,8 @@ export const playerApi = {
     positions?: string[];
     mergeStrategy?: "update" | "preserve";
   }) => {
-    return api.post('/players/sync/sleeper', options || {}, {
-      timeout: 120000, // 2 minutes for sync
+    return api.post('/sleeper/sync', options || {}, {
+      timeout: 120000,
     });
   },
 
@@ -296,7 +313,7 @@ export const playerApi = {
     week?: string;
     positions?: string[];
   }) => {
-    return api.get('/players/sleeper', { params: options });
+    return api.get('/sleeper/players', { params: options });
   },
 
   // Import history and stats
@@ -310,7 +327,7 @@ export const playerApi = {
     return api.get('/players/import/stats');
   },
 
-  // Player tiers - Keep existing signatures that work with the backend
+  // Player tiers
   getTiers: () => {
     return api.get('/tiers');
   },
@@ -327,12 +344,11 @@ export const playerApi = {
     return api.delete(`/tiers/${id}`);
   },
 
-  // Add missing assignPlayerToTier method
   assignPlayerToTier: (playerId: string, tierId: string | null) => {
     return api.put(`/players/${playerId}`, { tierId });
   },
 
-  // Player tags - Keep existing signatures that work with the backend
+  // Player tags
   getTags: () => {
     return api.get('/tags');
   },
@@ -349,7 +365,7 @@ export const playerApi = {
     return api.delete(`/tags/${id}`);
   },
 
-  // Player tag associations - Keep existing method names
+  // Player tag associations
   addPlayerTag: (playerId: string, tagId: string) => {
     return api.post(`/players/${playerId}/tags`, { tagId });
   },
@@ -358,7 +374,7 @@ export const playerApi = {
     return api.delete(`/players/${playerId}/tags/${tagId}`);
   },
 
-  // Player notes - Keep existing method names that components use
+  // Player notes
   addPlayerNote: (playerId: string, data: { content: string; color?: string }) => {
     return api.post(`/players/${playerId}/notes`, data);
   },
@@ -371,7 +387,7 @@ export const playerApi = {
     return api.delete(`/players/${playerId}/notes/${noteId}`);
   },
 
-  // Additional note methods for NoteManager that might call the backend directly
+  // Alternative note methods (for compatibility)
   addNote: (playerId: string, content: string, color: string = '#6B7280') => {
     return api.post(`/players/${playerId}/notes`, { content, color });
   },
@@ -387,13 +403,37 @@ export const playerApi = {
     return api.delete(`/notes/${noteId}`);
   },
 
-  // Additional tag methods for TagManager compatibility
+  // Alternative tag methods (for compatibility)
   addTagToPlayer: (playerId: string, tagId: string) => {
     return api.post(`/players/${playerId}/tags`, { tagId });
   },
 
   removeTagFromPlayer: (playerId: string, tagId: string) => {
     return api.delete(`/players/${playerId}/tags/${tagId}`);
+  },
+
+  // Statistics and analytics - with proper error handling
+  getPlayerStats: () => {
+    return api.get('/players/stats').catch((error) => {
+      console.warn('Stats endpoint not available:', error);
+      // Return default stats structure if endpoint doesn't exist
+      return {
+        data: {
+          totalPlayers: 0,
+          draftedPlayers: 0,
+          undraftedPlayers: 0,
+          byPosition: []
+        }
+      };
+    });
+  },
+
+  getPositionStats: (position: string) => {
+    return api.get(`/players/stats/position/${position}`);
+  },
+
+  getDraftAnalytics: () => {
+    return api.get('/players/stats/draft');
   },
 
   // Bulk operations
@@ -419,18 +459,5 @@ export const playerApi = {
     return api.get('/players/search', { 
       params: { q: query, ...filters }
     });
-  },
-
-  // Statistics and analytics
-  getPlayerStats: () => {
-    return api.get('/players/stats');
-  },
-
-  getPositionStats: (position: string) => {
-    return api.get(`/players/position-stats/${position}`);
-  },
-
-  getDraftAnalytics: () => {
-    return api.get('/players/draft-analytics');
   }
 };

@@ -47,6 +47,9 @@ export function PlayerList() {
   const filterProps = usePlayerFilters(players);
   const { filteredPlayers, hideDrafted, setHideDrafted } = filterProps;
 
+  // Calculate drafted count
+  const draftedCount = players.filter(p => p.isDrafted).length;
+
   useEffect(() => {
     Promise.all([
       fetchPlayers(),
@@ -58,15 +61,18 @@ export function PlayerList() {
   const fetchPlayers = async () => {
     try {
       setIsLoading(true);
-      // Fix: Use proper filter parameters instead of positional arguments
       const response = await playerApi.getPlayers({ 
         scoring: 'PPR', 
         includeDrafted: !hideDrafted 
       });
-      setPlayers(response.data);
+      
+      // Ensure we always get an array
+      const playersData = Array.isArray(response.data) ? response.data : [];
+      setPlayers(playersData);
       setError('');
-    } catch (err) {
-      setError('Failed to load players');
+    } catch (err: any) {
+      console.error('Failed to load players:', err);
+      setError('Failed to load players: ' + (err.response?.data?.error || err.message));
       setPlayers([]);
     } finally {
       setIsLoading(false);
@@ -76,18 +82,22 @@ export function PlayerList() {
   const fetchTags = async () => {
     try {
       const response = await playerApi.getTags();
-      setTags(response.data);
+      const tagsData = Array.isArray(response.data) ? response.data : [];
+      setTags(tagsData);
     } catch (err) {
       console.error('Failed to load tags:', err);
+      setTags([]);
     }
   };
 
   const fetchTiers = async () => {
     try {
       const response = await playerApi.getTiers();
-      setTiers(response.data);
+      const tiersData = Array.isArray(response.data) ? response.data : [];
+      setTiers(tiersData);
     } catch (err) {
       console.error('Failed to load tiers:', err);
+      setTiers([]);
     }
   };
 
@@ -199,7 +209,7 @@ export function PlayerList() {
 
   const handleAssignTier = async (playerId: string, tierId: string | null) => {
     try {
-      // Optimistic update - fix tierId type mismatch
+      // Optimistic update
       setPlayers(prev => prev.map(p => 
         p.id === playerId ? { ...p, tierId: tierId } : p
       ));
@@ -217,7 +227,6 @@ export function PlayerList() {
   const handleExport = async () => {
     try {
       setIsExporting(true);
-      // Fix: Pass format parameter as required
       const response = await playerApi.exportPlayers('excel');
       const blob = response.data;
       
@@ -230,80 +239,50 @@ export function PlayerList() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to export players:', error);
-      setError('Failed to export players');
+      setError('Failed to export players: ' + (error.response?.data?.error || error.message));
     } finally {
       setIsExporting(false);
     }
   };
 
-  const getTierInfo = (tierId: string | null): Tier | null => {
+  // Get tier info helper
+  const getTierInfo = useCallback((tierId: string | null): Tier | null => {
     if (!tierId) return null;
-    return tiers.find(t => t.id === tierId) || null;
-  };
+    return tiers.find(tier => tier.id === tierId) || null;
+  }, [tiers]);
 
-  const groupPlayersByTier = () => {
-    const grouped = new Map<string, Player[]>();
-    
-    // Use 'No Tier' for players without tiers
-    const noTierKey = 'no-tier';
-    grouped.set(noTierKey, []);
-    
-    // Group tiers by their order
-    tiers.forEach(tier => {
-      grouped.set(tier.id, []);
-    });
-    
-    filteredPlayers.forEach(player => {
-      const key = player.tierId || noTierKey;
-      if (!grouped.has(key)) {
-        grouped.set(key, []);
-      }
-      grouped.get(key)!.push(player);
-    });
-    
-    // Remove empty groups
-    for (const [key, players] of grouped) {
-      if (players.length === 0) {
-        grouped.delete(key);
-      }
-    }
-    
-    return grouped;
-  };
-
-  const draftedCount = players.filter(p => p.isDrafted).length;
-  const undraftedCount = players.filter(p => !p.isDrafted).length;
-  const totalCount = players.length;
-
-  if (isLoading) {
+  if (isLoading && players.length === 0) {
     return (
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="text-center py-12">
-          <div className="text-xl">Loading players...</div>
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading players...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
+    <div className="container mx-auto px-4 py-6">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Fantasy Draft Board</h1>
-          <div className="text-sm text-gray-600 mt-1">
-            {totalCount} total • {draftedCount} drafted • {undraftedCount} available
-          </div>
+          <h1 className="text-3xl font-bold text-gray-800">Player List</h1>
+          <p className="text-gray-600">
+            {players.length} total players • {draftedCount} drafted • {filteredPlayers.length} showing
+          </p>
         </div>
-        
-        <div className="flex space-x-3">
-          {/* Export Button */}
-          <button 
+        <div className="flex gap-3">
+          <button
             onClick={handleExport}
-            disabled={isExporting || totalCount === 0}
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            disabled={isExporting || players.length === 0}
+            className={`flex items-center px-4 py-2 rounded-md font-medium transition-colors ${
+              isExporting || players.length === 0
+                ? 'bg-gray-400 cursor-not-allowed text-gray-600'
+                : 'bg-green-600 hover:bg-green-700 text-white'
+            }`}
           >
             {isExporting ? (
               <>

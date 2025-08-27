@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { PlayerRow } from './PlayerList/PlayerRow';
 import { EnhancedPlayerImport } from './EnhancedPlayerImport';
-import { playerApi, sleeperApi } from '../api';
-import type { Player, Tier } from '../api';
+import { playerApi } from '../api/playerApi';
+import { sleeperApi } from '../api/sleeperApi';
+import type { Player, Tier } from '../api/playerApi';
 
 // Custom hook for debouncing
 function useDebounce<T extends (...args: any[]) => any>(callback: T, delay: number) {
@@ -25,6 +26,7 @@ function useDebounce<T extends (...args: any[]) => any>(callback: T, delay: numb
 }
 
 export const EnhancedPlayerList: React.FC = () => {
+  // Initialize with empty arrays to prevent filter errors
   const [players, setPlayers] = useState<Player[]>([]);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -48,10 +50,15 @@ export const EnhancedPlayerList: React.FC = () => {
     searchTerm: ''
   });
 
-  // Stats
-  const [stats, setStats] = useState<any>(null);
+  // Stats - with proper default structure
+  const [stats, setStats] = useState<{
+    totalPlayers: number;
+    draftedPlayers: number;
+    undraftedPlayers: number;
+    byPosition: any[];
+  } | null>(null);
 
-  // Load players
+  // Load players with proper error handling
   const fetchPlayers = useCallback(async () => {
     setIsLoading(true);
     setError('');
@@ -67,33 +74,51 @@ export const EnhancedPlayerList: React.FC = () => {
 
       const [playersResponse, tiersResponse] = await Promise.all([
         playerApi.getPlayers(filterParams),
-        playerApi.getTiers() // Use getTiers instead of getTags for tiers
+        playerApi.getTiers()
       ]);
 
-      setPlayers(playersResponse.data);
-      setTiers(tiersResponse.data);
+      // Ensure we always set arrays, even if API returns unexpected data
+      setPlayers(Array.isArray(playersResponse.data) ? playersResponse.data : []);
+      setTiers(Array.isArray(tiersResponse.data) ? tiersResponse.data : []);
     } catch (error: any) {
       console.error('Error fetching players:', error);
-      setError('Failed to load players');
+      setError('Failed to load players: ' + (error.response?.data?.error || error.message));
+      // Ensure arrays are still set on error
+      setPlayers([]);
+      setTiers([]);
     } finally {
       setIsLoading(false);
     }
   }, [filters]);
 
-  // Load stats
+  // Load stats - make this optional and non-blocking
   const fetchStats = useCallback(async () => {
     try {
       const response = await playerApi.getPlayerStats();
-      setStats(response.data);
+      if (response.data) {
+        setStats(response.data);
+      }
     } catch (error) {
-      console.warn('Failed to load stats:', error);
+      console.warn('Stats not available:', error);
+      // Set default stats structure if API fails
+      setStats({
+        totalPlayers: players.length,
+        draftedPlayers: players.filter(p => p.isDrafted).length,
+        undraftedPlayers: players.filter(p => !p.isDrafted).length,
+        byPosition: []
+      });
     }
-  }, []);
+  }, [players]);
 
   useEffect(() => {
     fetchPlayers();
-    fetchStats();
-  }, [fetchPlayers, fetchStats]);
+  }, [fetchPlayers]);
+
+  useEffect(() => {
+    if (players.length > 0) {
+      fetchStats();
+    }
+  }, [players, fetchStats]);
 
   // Optimistic update for immediate UI feedback
   const updatePlayerOptimistically = useCallback((playerId: string, field: string, value: any) => {
@@ -111,14 +136,7 @@ export const EnhancedPlayerList: React.FC = () => {
       const updateData: any = {};
       updateData[field] = value;
       
-      // Use fast endpoint for simple field updates
-      const fastUpdateFields = ['customRank', 'projectedPoints', 'vorp', 'adp', 'rank', 'byeWeek'];
-      
-      if (fastUpdateFields.includes(field)) {
-        await playerApi.updatePlayerQuick(playerId, updateData);
-      } else {
-        await playerApi.updatePlayer(playerId, updateData);
-      }
+      await playerApi.updatePlayer(playerId, updateData);
       
       // Remove from pending on success
       setPendingUpdates(prev => {
@@ -145,52 +163,56 @@ export const EnhancedPlayerList: React.FC = () => {
 
   const debouncedUpdate = useDebounce(performPlayerUpdate, 500);
 
-  // Handle cell edit with optimistic updates
+  // Handle cell edits
   const handleCellEdit = useCallback((playerId: string, field: string, value: any) => {
-    // Immediate UI update for instant feedback
     updatePlayerOptimistically(playerId, field, value);
-    
-    // Debounced API call
     debouncedUpdate(playerId, field, value);
   }, [updatePlayerOptimistically, debouncedUpdate]);
 
+  // Handle toggle drafted
   const handleToggleDrafted = useCallback(async (playerId: string, isDrafted: boolean) => {
     try {
-      updatePlayerOptimistically(playerId, 'isDrafted', isDrafted);
+      // Optimistic update
+      setPlayers(prev => prev.map(p => 
+        p.id === playerId ? { ...p, isDrafted } : p
+      ));
+      
       await playerApi.toggleDraftStatus(playerId, isDrafted);
-      setPendingUpdates(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(`${playerId}-isDrafted`);
-        return newSet;
-      });
     } catch (error) {
-      console.error('Failed to update draft status:', error);
+      console.error('Failed to toggle draft status:', error);
       setError('Failed to update draft status');
-      fetchPlayers(); // Revert on error
+      
+      // Revert on error
+      setPlayers(prev => prev.map(p => 
+        p.id === playerId ? { ...p, isDrafted: !isDrafted } : p
+      ));
     }
-  }, [updatePlayerOptimistically, fetchPlayers]);
+  }, []);
 
+  // Handle assign tier
   const handleAssignTier = useCallback(async (playerId: string, tierId: string | null) => {
     try {
-      updatePlayerOptimistically(playerId, 'tierId', tierId);
+      // Optimistic update
+      setPlayers(prev => prev.map(p => 
+        p.id === playerId ? { ...p, tierId } : p
+      ));
+      
       await playerApi.assignPlayerToTier(playerId, tierId);
-      setPendingUpdates(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(`${playerId}-tierId`);
-        return newSet;
-      });
     } catch (error) {
       console.error('Failed to assign tier:', error);
       setError('Failed to assign tier');
-      fetchPlayers(); // Revert on error
+      
+      // Revert on error
+      fetchPlayers();
     }
-  }, [updatePlayerOptimistically, fetchPlayers]);
+  }, [fetchPlayers]);
 
+  // Handle delete player
   const handleDeletePlayer = useCallback(async (playerId: string) => {
     const player = players.find(p => p.id === playerId);
     if (!player) return;
 
-    if (player.sleeperId) {
+    if (player.dataSource === 'sleeper') {
       alert('Cannot delete Sleeper players. They will be restored on next sync.');
       return;
     }
@@ -208,6 +230,7 @@ export const EnhancedPlayerList: React.FC = () => {
     }
   }, [players]);
 
+  // Handle Sleeper sync
   const handleSleeperSync = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -233,6 +256,7 @@ export const EnhancedPlayerList: React.FC = () => {
     }
   }, [fetchPlayers, fetchStats]);
 
+  // Handle export
   const handleExport = useCallback(async () => {
     try {
       setError('');
@@ -262,8 +286,10 @@ export const EnhancedPlayerList: React.FC = () => {
     }
   }, []);
 
-  // Filter players based on search and filters
+  // Filter players based on search and filters - with null safety
   const filteredPlayers = useMemo(() => {
+    if (!Array.isArray(players)) return [];
+    
     return players.filter(player => {
       if (filters.searchTerm) {
         const searchLower = filters.searchTerm.toLowerCase();
@@ -288,10 +314,21 @@ export const EnhancedPlayerList: React.FC = () => {
     setCurrentPage(1);
   }, [filters]);
 
-  // Get unique values for filter dropdowns
-  const positions = useMemo(() => [...new Set(players.map(p => p.position))].sort(), [players]);
-  const teams = useMemo(() => [...new Set(players.map(p => p.team).filter(Boolean))].sort(), [players]);
-  const dataSources = useMemo(() => [...new Set(players.map(p => p.dataSource))].sort(), [players]);
+  // Get unique values for filter dropdowns - with null safety
+  const positions = useMemo(() => {
+    if (!Array.isArray(players)) return [];
+    return [...new Set(players.map(p => p.position))].sort();
+  }, [players]);
+  
+  const teams = useMemo(() => {
+    if (!Array.isArray(players)) return [];
+    return [...new Set(players.map(p => p.team).filter(Boolean))].sort() as string[];
+  }, [players]);
+  
+  const dataSources = useMemo(() => {
+    if (!Array.isArray(players)) return [];
+    return [...new Set(players.map(p => p.dataSource))].sort();
+  }, [players]);
 
   // Load more players
   const handleLoadMore = useCallback(async () => {
@@ -323,23 +360,27 @@ export const EnhancedPlayerList: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header with Stats */}
+      {/* Header with Stats - Fixed to handle actual stats structure */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg">
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{stats.totalPlayers}</div>
+            <div className="text-2xl font-bold text-blue-600">{stats.totalPlayers || 0}</div>
             <div className="text-sm text-gray-600">Total Players</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">{stats.bySource.sleeper}</div>
+            <div className="text-2xl font-bold text-green-600">
+              {players.filter(p => p.dataSource === 'sleeper').length}
+            </div>
             <div className="text-sm text-gray-600">From Sleeper</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{stats.bySource.excel}</div>
+            <div className="text-2xl font-bold text-blue-600">
+              {players.filter(p => p.dataSource === 'excel').length}
+            </div>
             <div className="text-sm text-gray-600">From Excel</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-red-600">{stats.draftedPlayers}</div>
+            <div className="text-2xl font-bold text-red-600">{stats.draftedPlayers || 0}</div>
             <div className="text-sm text-gray-600">Drafted</div>
           </div>
         </div>
@@ -391,163 +432,146 @@ export const EnhancedPlayerList: React.FC = () => {
 
       {/* Error Display */}
       {error && (
-        <div className="bg-red-100 text-red-700 p-4 rounded-lg text-center border border-red-200">
+        <div className="bg-red-100 text-red-700 p-4 rounded-lg border border-red-400">
           {error}
         </div>
       )}
 
       {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 p-4 bg-white border rounded-lg">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+      <div className="bg-white p-4 rounded-lg shadow border">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+          {/* Search */}
           <input
             type="text"
+            placeholder="Search players..."
             value={filters.searchTerm}
             onChange={(e) => setFilters(prev => ({ ...prev, searchTerm: e.target.value }))}
-            placeholder="Search players..."
-            className="w-full border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            className="p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
           />
-        </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Position</label>
+          {/* Position Filter */}
           <select
             value={filters.position}
             onChange={(e) => setFilters(prev => ({ ...prev, position: e.target.value }))}
-            className="w-full border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            className="p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All Positions</option>
             {positions.map(pos => (
               <option key={pos} value={pos}>{pos}</option>
             ))}
           </select>
-        </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Team</label>
+          {/* Team Filter */}
           <select
             value={filters.team}
             onChange={(e) => setFilters(prev => ({ ...prev, team: e.target.value }))}
-            className="w-full border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            className="p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All Teams</option>
             {teams.map(team => (
-              <option key={team} value={team || ''}>{team}</option>
+              <option key={team} value={team || ''}>{team || 'No Team'}</option>
             ))}
           </select>
-        </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Data Source</label>
+          {/* Data Source Filter */}
           <select
             value={filters.dataSource}
             onChange={(e) => setFilters(prev => ({ ...prev, dataSource: e.target.value }))}
-            className="w-full border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+            className="p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All Sources</option>
             {dataSources.map(source => (
-              <option key={source} value={source || ''}>
-                {source === 'sleeper' ? '🏈 Sleeper' : 
-                 source === 'excel' ? '📊 Excel' : '✏️ Manual'}
-              </option>
+              <option key={source} value={source}>{source}</option>
             ))}
           </select>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Sleeper Data</label>
-          <select
-            value={filters.hasSleeperId}
-            onChange={(e) => setFilters(prev => ({ ...prev, hasSleeperId: e.target.value }))}
-            className="w-full border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">All Players</option>
-            <option value="true">Sleeper Players Only</option>
-            <option value="false">Non-Sleeper Only</option>
-          </select>
-        </div>
-
-        <div className="flex items-end">
+        {/* Additional Filters */}
+        <div className="flex items-center gap-4">
           <label className="flex items-center">
             <input
               type="checkbox"
               checked={filters.includeDrafted}
               onChange={(e) => setFilters(prev => ({ ...prev, includeDrafted: e.target.checked }))}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              className="mr-2 h-4 w-4 text-blue-600 rounded"
             />
-            <span className="ml-2 text-sm text-gray-700">Include Drafted</span>
+            Include Drafted Players
           </label>
         </div>
       </div>
 
       {/* Player Table */}
-      <div className="bg-white shadow overflow-hidden sm:rounded-md">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Draft
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Rank
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Custom
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Player
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Pos
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Team
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Bye
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Proj
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  VORP
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  ADP
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tier
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tags
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Notes
-                </th>
-                <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {displayedPlayers.map(player => (
-                <PlayerRow
-                  key={player.id}
-                  player={player}
-                  tiers={tiers}
-                  onToggleDrafted={handleToggleDrafted}
-                  onAssignTier={handleAssignTier}
-                  onEditCell={handleCellEdit}
-                  onDelete={handleDeletePlayer}
-                  onShowDetail={(id) => console.log('Show detail for', id)}
-                  onShowNotes={(id) => console.log('Show notes for', id)}
-                  isPending={Array.from(pendingUpdates).some(update => update.startsWith(player.id))}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="bg-white rounded-lg shadow border overflow-hidden">
+        {isLoading ? (
+          <div className="p-8 text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
+            <p className="mt-2 text-gray-600">Loading players...</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Draft
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Rank
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Custom
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Player
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Pos
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Team
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Bye
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Proj Points
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    VORP
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tier
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tags
+                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Notes
+                  </th>
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {displayedPlayers.map(player => (
+                  <PlayerRow
+                    key={player.id}
+                    player={player}
+                    tiers={tiers}
+                    onToggleDrafted={handleToggleDrafted}
+                    onAssignTier={handleAssignTier}
+                    onEditCell={handleCellEdit}
+                    onDelete={handleDeletePlayer}
+                    onShowDetail={(id) => console.log('Show detail for', id)}
+                    onShowNotes={(id) => console.log('Show notes for', id)}
+                    isPending={Array.from(pendingUpdates).some(update => update.startsWith(player.id))}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* Load More Button */}
         {hasMorePlayers && (
