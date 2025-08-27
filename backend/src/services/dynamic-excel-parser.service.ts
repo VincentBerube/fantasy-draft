@@ -37,6 +37,8 @@ export class DynamicExcelParserService {
     'player': 'name',
     'playername': 'name',
     'overallplayer': 'name',
+    'full name': 'name',
+    'fullname': 'name',
     
     // Position variations
     'pos': 'position',
@@ -45,73 +47,121 @@ export class DynamicExcelParserService {
     // Team variations
     'team': 'team',
     'tm': 'team',
+    'nfl team': 'team',
+    'nflteam': 'team',
     
     // Ranking variations
     'rank': 'rank',
     'rk': 'rank',
     'overall': 'rank',
     'overallrank': 'rank',
+    'overall rank': 'rank',
     'customrank': 'customRank',
+    'custom rank': 'customRank',
     
     // Position ranking
     'posrank': 'positionalRank',
     'positionrank': 'positionalRank',
+    'pos rank': 'positionalRank',
+    'position rank': 'positionalRank',
     'posrk': 'positionalRank',
+    'pos rk': 'positionalRank',
     
     // Points and projections
     'points': 'projectedPoints',
     'projectedpoints': 'projectedPoints',
+    'projected points': 'projectedPoints',
     'fpts': 'projectedPoints',
     'fps': 'projectedPoints',
     'proj': 'projectedPoints',
     'projection': 'projectedPoints',
+    'proj pts': 'projectedPoints',
+    'projpts': 'projectedPoints',
     
     // Advanced metrics
     'vorp': 'vorp',
     'value': 'vorp',
+    'value over replacement': 'vorp',
+    'valueoverreplacement': 'vorp',
     'adp': 'adp',
     'avgdraftposition': 'adp',
+    'avg draft position': 'adp',
+    'average draft position': 'adp',
+    'averagedraftposition': 'adp',
     
     // Schedule
     'bye': 'byeWeek',
     'byeweek': 'byeWeek',
+    'bye week': 'byeWeek',
     
     // Historical
     'lastseason': 'lastSeasonPoints',
+    'last season': 'lastSeasonPoints',
     'lastyear': 'lastSeasonPoints',
+    'last year': 'lastSeasonPoints',
     '2023': 'lastSeasonPoints',
-    '2023points': 'lastSeasonPoints'
+    '2023points': 'lastSeasonPoints',
+    '2023 points': 'lastSeasonPoints',
+    'prev season': 'lastSeasonPoints',
+    'previous season': 'lastSeasonPoints',
+    'prevseason': 'lastSeasonPoints',
+    'previousseason': 'lastSeasonPoints'
   };
 
   /**
    * Parse Excel file with dynamic column detection
    */
-  async parseExcelFile(filePath: string): Promise<ParsedExcelData> {
+  async parseExcelFile(filePath: string, customMappings?: Record<string, string>): Promise<ParsedExcelData> {
     try {
       const workbook = XLSX.readFile(filePath);
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
+
+      // Convert to JSON with header row
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
       
-      // Convert to raw array data
-      const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-      
-      if (rawData.length < 2) {
-        throw new Error('Excel file must contain at least header and one data row');
+      if (jsonData.length < 2) {
+        throw new Error('Excel file must contain at least a header row and one data row');
       }
 
       // Analyze columns
-      const columns = this.analyzeColumns(rawData);
+      const headers = (jsonData[0] as string[]).map(h => h?.toString().trim() || '');
+      const dataRows = (jsonData.slice(1) as any[][]).filter((row: any[]) => 
+        row && Array.isArray(row) && row.some(cell => cell != null && cell !== '')
+      );
       
-      // Parse player data
-      const { players, metadata } = this.parsePlayerData(rawData, columns);
+      const columns = this.analyzeColumns(headers, dataRows, customMappings);
+
+      // Parse players
+      const players = [];
+      const skippedRows = [];
       
+      for (let i = 0; i < dataRows.length; i++) {
+        const row = dataRows[i];
+        if (!row || !Array.isArray(row) || row.length === 0) continue;
+
+        try {
+          const player = this.parsePlayerFromRow(row, columns, i);
+          if (player) {
+            players.push(player);
+          } else {
+            skippedRows.push(i);
+          }
+        } catch (error) {
+          console.warn(`Failed to parse row ${i + 1}:`, error);
+          skippedRows.push(i);
+        }
+      }
+
       return {
         columns,
         players,
         metadata: {
-          ...metadata,
-          recognizedColumns: columns.filter(c => c.mappedField).length,
-          unknownColumns: columns.filter(c => !c.mappedField).map(c => c.header)
+          totalRows: dataRows.length,
+          validRows: players.length,
+          skippedRows: skippedRows.length,
+          recognizedColumns: columns.filter(c => c.mappedField !== null).length,
+          unknownColumns: columns.filter(c => c.mappedField === null).map(c => c.header)
         }
       };
 
@@ -121,332 +171,209 @@ export class DynamicExcelParserService {
   }
 
   /**
-   * Analyze columns to detect their purpose and data types
+   * Get column analysis for preview without full parsing
    */
-  private analyzeColumns(rawData: any[][]): DynamicExcelColumn[] {
-    const headers = rawData[0] as string[];
-    const dataRows = rawData.slice(1, 6); // Sample first 5 rows for analysis
-    
+  async getColumnAnalysis(filePath: string): Promise<{
+    columns: DynamicExcelColumn[];
+    sampleRows: any[][];
+  }> {
+    try {
+      const workbook = XLSX.readFile(filePath);
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+
+      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+      
+      if (jsonData.length < 1) {
+        throw new Error('Excel file appears to be empty');
+      }
+
+      const headers = (jsonData[0] as string[]).map(h => h?.toString().trim() || '');
+      const allDataRows = jsonData.slice(1).filter((row: any) => 
+        row && Array.isArray(row) && (row as any[]).some(cell => cell != null && cell !== '')
+      ) as any[][];
+      
+      const dataRows = allDataRows.slice(0, Math.min(10, allDataRows.length)); // First 10 data rows
+      
+      const columns = this.analyzeColumns(headers, dataRows);
+
+      return {
+        columns,
+        sampleRows: allDataRows.slice(0, 5) // First 5 rows for preview
+      };
+
+    } catch (error: any) {
+      throw new Error(`Failed to analyze Excel file: ${error.message}`);
+    }
+  }
+
+  /**
+   * Analyze columns and detect their types and mappings
+   */
+  private analyzeColumns(
+    headers: string[], 
+    dataRows: any[][],
+    customMappings?: Record<string, string>
+  ): DynamicExcelColumn[] {
     return headers.map((header, index) => {
       const normalizedHeader = this.normalizeHeader(header);
-      const sampleValues = dataRows
-        .map(row => row[index])
-        .filter(val => val !== null && val !== undefined && val !== '');
       
+      // Get sample values for type detection
+      const sampleValues = dataRows
+        .slice(0, Math.min(10, dataRows.length))
+        .map(row => row[index])
+        .filter(val => val != null && val !== '');
+
+      // Determine field mapping
+      let mappedField = null;
+      
+      // Check custom mappings first
+      if (customMappings && customMappings[header]) {
+        mappedField = customMappings[header];
+      } else if (this.CORE_FIELD_MAPPINGS[normalizedHeader]) {
+        mappedField = this.CORE_FIELD_MAPPINGS[normalizedHeader];
+      }
+
       return {
         index,
-        header: header || `Column_${index}`,
+        header,
         normalizedHeader,
-        mappedField: this.mapHeaderToField(normalizedHeader),
+        mappedField,
         dataType: this.detectDataType(sampleValues),
-        sampleValues: sampleValues.slice(0, 3) // Keep first 3 samples
+        sampleValues: sampleValues.slice(0, 3) // Keep only first 3 samples
       };
     });
   }
 
   /**
-   * Parse player data using column analysis
+   * Parse a single player from a row
    */
-  private parsePlayerData(
-    rawData: any[][],
-    columns: DynamicExcelColumn[]
-  ): { 
-    players: ParsedExcelData['players'], 
-    metadata: Pick<ParsedExcelData['metadata'], 'totalRows' | 'validRows' | 'skippedRows'> 
-  } {
-    const dataRows = rawData.slice(1);
-    const players: ParsedExcelData['players'] = [];
-    let validRows = 0;
-    let skippedRows = 0;
+  private parsePlayerFromRow(
+    row: any[], 
+    columns: DynamicExcelColumn[], 
+    rowIndex: number
+  ): ParsedExcelData['players'][0] | null {
+    const additionalData: Record<string, any> = {};
+    let name = '';
+    let position: string | undefined;
+    let team: string | undefined;
+    let confidence = 0.5; // Base confidence
 
-    // Find core columns
-    const nameColumn = columns.find(c => c.mappedField === 'name');
-    const positionColumn = columns.find(c => c.mappedField === 'position');
-    const teamColumn = columns.find(c => c.mappedField === 'team');
+    // Extract data based on column mappings
+    columns.forEach(col => {
+      const value = row[col.index];
+      if (value == null || value === '') return;
 
-    if (!nameColumn) {
-      throw new Error('Could not identify player name column');
-    }
-
-    for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
-      const row = dataRows[rowIndex];
-      
-      // Skip empty rows
-      if (!row || row.length === 0 || row.every(cell => !cell)) {
-        skippedRows++;
-        continue;
+      if (col.mappedField === 'name') {
+        name = normalizePlayerName(value.toString());
+        confidence += 0.3; // Having a name increases confidence
+      } else if (col.mappedField === 'position') {
+        position = normalizePosition(value.toString());
+        confidence += 0.1;
+      } else if (col.mappedField === 'team') {
+        team = normalizeTeam(value.toString());
+        confidence += 0.1;
+      } else if (col.mappedField) {
+        // Store mapped field
+        additionalData[col.mappedField] = this.parseValue(value, col.dataType);
+        confidence += 0.05; // Each additional field increases confidence slightly
+      } else {
+        // Store unmapped column for potential future use
+        additionalData[col.header] = value;
       }
+    });
 
-      const name = this.cleanValue(row[nameColumn.index]);
-      if (!name) {
-        skippedRows++;
-        continue;
-      }
-
-      // Extract core data
-      const position = positionColumn ? 
-        normalizePosition(this.cleanValue(row[positionColumn.index])) || undefined : undefined;
-      const team = teamColumn ? 
-        normalizeTeam(this.cleanValue(row[teamColumn.index])) || undefined : undefined;
-
-      // Extract additional data from all other columns
-      const additionalData: Record<string, any> = {};
-      let confidence = 0.8; // Base confidence
-
-      columns.forEach(column => {
-        const value = this.cleanValue(row[column.index]);
-        if (value === null || value === undefined) return;
-
-        if (column.mappedField && column.mappedField !== 'name') {
-          // This is a recognized field
-          additionalData[column.mappedField] = this.convertValue(value, column.dataType);
-          confidence += 0.02; // Boost confidence for recognized fields
-        } else if (column.header !== name) {
-          // Store unknown columns with their original header names
-          const key = `custom_${column.normalizedHeader}`;
-          additionalData[key] = this.convertValue(value, column.dataType);
-        }
-      });
-
-      players.push({
-        name: normalizePlayerName(name),
-        position,
-        team,
-        rowIndex: rowIndex + 2, // +2 for 1-based indexing and header row
-        additionalData,
-        confidence: Math.min(confidence, 1.0)
-      });
-
-      validRows++;
+    // Must have a name to be valid
+    if (!name.trim()) {
+      return null;
     }
 
     return {
-      players,
-      metadata: {
-        totalRows: dataRows.length,
-        validRows,
-        skippedRows
-      }
+      name,
+      position,
+      team,
+      rowIndex: rowIndex + 1, // +1 because we removed header row
+      additionalData,
+      confidence: Math.min(1, confidence)
     };
   }
 
   /**
-   * Normalize header names for consistent mapping
+   * Normalize header for mapping lookup
    */
   private normalizeHeader(header: string): string {
-    if (!header) return '';
-    
     return header
       .toLowerCase()
-      .replace(/[^a-z0-9]/g, '') // Remove all non-alphanumeric
+      .replace(/[^a-z0-9]/g, '')
       .trim();
   }
 
   /**
-   * Map normalized header to known field
+   * Detect the data type of column values
    */
-  private mapHeaderToField(normalizedHeader: string): string | null {
-    // Direct match
-    if (this.CORE_FIELD_MAPPINGS[normalizedHeader]) {
-      return this.CORE_FIELD_MAPPINGS[normalizedHeader];
-    }
+  private detectDataType(sampleValues: any[]): 'string' | 'number' | 'boolean' | 'date' {
+    if (sampleValues.length === 0) return 'string';
 
-    // Partial matches for flexibility
-    for (const [key, field] of Object.entries(this.CORE_FIELD_MAPPINGS)) {
-      if (normalizedHeader.includes(key) || key.includes(normalizedHeader)) {
-        return field;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Detect data type from sample values
-   */
-  private detectDataType(values: any[]): 'string' | 'number' | 'boolean' | 'date' {
-    if (values.length === 0) return 'string';
-
-    let numberCount = 0;
-    let booleanCount = 0;
-    let dateCount = 0;
-
-    for (const value of values) {
-      if (this.isNumber(value)) numberCount++;
-      else if (this.isBoolean(value)) booleanCount++;
-      else if (this.isDate(value)) dateCount++;
-    }
-
-    const total = values.length;
+    const numericCount = sampleValues.filter(val => {
+      const num = Number(val);
+      return !isNaN(num) && isFinite(num);
+    }).length;
     
-    // If 80% or more are numbers, consider it numeric
-    if (numberCount / total >= 0.8) return 'number';
+    const dateCount = sampleValues.filter(val => {
+      const dateVal = new Date(val);
+      return !isNaN(dateVal.getTime()) && val.toString().match(/\d{1,4}[/-]\d{1,2}[/-]\d{1,4}/);
+    }).length;
     
-    // If 80% or more are booleans, consider it boolean
-    if (booleanCount / total >= 0.8) return 'boolean';
+    const booleanCount = sampleValues.filter(val => 
+      ['true', 'false', '1', '0', 'yes', 'no', 'y', 'n'].includes(val.toString().toLowerCase())
+    ).length;
+
+    const total = sampleValues.length;
     
-    // If 60% or more are dates, consider it date
-    if (dateCount / total >= 0.6) return 'date';
+    if (booleanCount / total > 0.8) return 'boolean';
+    if (numericCount / total > 0.7) return 'number';
+    if (dateCount / total > 0.7) return 'date';
     
     return 'string';
   }
 
   /**
-   * Check if value is a number
+   * Parse value according to detected type
    */
-  private isNumber(value: any): boolean {
-    if (typeof value === 'number') return !isNaN(value);
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      return trimmed !== '' && !isNaN(Number(trimmed));
-    }
-    return false;
-  }
-
-  /**
-   * Check if value is a boolean
-   */
-  private isBoolean(value: any): boolean {
-    if (typeof value === 'boolean') return true;
-    if (typeof value === 'string') {
-      const lower = value.toLowerCase().trim();
-      return ['true', 'false', 'yes', 'no', 'y', 'n', '1', '0'].includes(lower);
-    }
-    return false;
-  }
-
-  /**
-   * Check if value is a date
-   */
-  private isDate(value: any): boolean {
-    if (value instanceof Date) return !isNaN(value.getTime());
-    if (typeof value === 'string') {
-      const date = new Date(value);
-      return !isNaN(date.getTime());
-    }
-    return false;
-  }
-
-  /**
-   * Clean and normalize cell values
-   */
-  private cleanValue(value: any): any {
-    if (value === null || value === undefined) return null;
-    
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (trimmed === '' || trimmed === '-' || trimmed === 'N/A') return null;
-      return trimmed;
-    }
-    
-    return value;
-  }
-
-  /**
-   * Convert value to appropriate type
-   */
-  private convertValue(value: any, dataType: string): any {
-    if (value === null || value === undefined) return null;
+  private parseValue(value: any, dataType: string): any {
+    if (value == null || value === '') return null;
 
     switch (dataType) {
       case 'number':
-        const num = typeof value === 'number' ? value : parseFloat(value.toString());
-        return isNaN(num) ? null : num;
-        
+        const num = Number(value);
+        return isNaN(num) ? value : num;
       case 'boolean':
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'string') {
-          const lower = value.toLowerCase().trim();
-          if (['true', 'yes', 'y', '1'].includes(lower)) return true;
-          if (['false', 'no', 'n', '0'].includes(lower)) return false;
-        }
-        return null;
-        
+        const str = value.toString().toLowerCase();
+        return ['true', '1', 'yes', 'y'].includes(str);
       case 'date':
-        if (value instanceof Date) return value;
         const date = new Date(value);
-        return isNaN(date.getTime()) ? null : date;
-        
+        return isNaN(date.getTime()) ? value : date;
       default:
-        return value.toString();
+        return value.toString().trim();
     }
   }
 
   /**
-   * Generate a preview of what will be imported
+   * Get available field options for mapping
    */
-  async generateImportPreview(filePath: string): Promise<{
-    summary: {
-      totalRows: number;
-      validPlayers: number;
-      recognizedColumns: number;
-      unknownColumns: number;
-    };
-    columnMapping: Array<{
-      header: string;
-      mappedTo: string | null;
-      dataType: string;
-      sampleValue: any;
-    }>;
-    samplePlayers: Array<{
-      name: string;
-      position?: string;
-      recognizedFields: Record<string, any>;
-      unknownFields: Record<string, any>;
-    }>;
-    warnings: string[];
-  }> {
-    const parsed = await this.parseExcelFile(filePath);
-    
-    const warnings: string[] = [];
-    
-    // Check for common issues
-    if (parsed.metadata.unknownColumns.length > parsed.metadata.recognizedColumns) {
-      warnings.push('More unknown columns than recognized ones - check column headers');
-    }
-    
-    if (parsed.players.some(p => p.confidence < 0.7)) {
-      warnings.push('Some rows have low confidence parsing - manual review recommended');
-    }
-    
-    const nameColumn = parsed.columns.find(c => c.mappedField === 'name');
-    if (!nameColumn) {
-      warnings.push('Could not identify player name column');
-    }
-
-    return {
-      summary: {
-        totalRows: parsed.metadata.totalRows,
-        validPlayers: parsed.metadata.validRows,
-        recognizedColumns: parsed.metadata.recognizedColumns,
-        unknownColumns: parsed.metadata.unknownColumns.length
-      },
-      columnMapping: parsed.columns.map(col => ({
-        header: col.header,
-        mappedTo: col.mappedField,
-        dataType: col.dataType,
-        sampleValue: col.sampleValues[0] || null
-      })),
-      samplePlayers: parsed.players.slice(0, 5).map(player => {
-        const recognizedFields: Record<string, any> = {};
-        const unknownFields: Record<string, any> = {};
-        
-        Object.entries(player.additionalData).forEach(([key, value]) => {
-          if (key.startsWith('custom_')) {
-            unknownFields[key.replace('custom_', '')] = value;
-          } else {
-            recognizedFields[key] = value;
-          }
-        });
-        
-        return {
-          name: player.name,
-          position: player.position,
-          recognizedFields,
-          unknownFields
-        };
-      }),
-      warnings
-    };
+  getAvailableFields(): Array<{ value: string; label: string; description?: string }> {
+    return [
+      { value: 'name', label: 'Player Name', description: 'Full player name' },
+      { value: 'position', label: 'Position', description: 'QB, RB, WR, TE, K, DEF' },
+      { value: 'team', label: 'Team', description: 'NFL team abbreviation' },
+      { value: 'rank', label: 'Overall Rank', description: 'Overall fantasy ranking' },
+      { value: 'customRank', label: 'Custom Rank', description: 'Your custom ranking' },
+      { value: 'positionalRank', label: 'Position Rank', description: 'Rank within position' },
+      { value: 'projectedPoints', label: 'Projected Points', description: 'Fantasy points projection' },
+      { value: 'vorp', label: 'VORP/Value', description: 'Value over replacement player' },
+      { value: 'adp', label: 'ADP', description: 'Average draft position' },
+      { value: 'byeWeek', label: 'Bye Week', description: 'Week number for bye' },
+      { value: 'lastSeasonPoints', label: 'Last Season Points', description: 'Previous season fantasy points' }
+    ];
   }
 }

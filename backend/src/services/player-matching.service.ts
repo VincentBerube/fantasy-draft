@@ -1,6 +1,6 @@
 // backend/src/services/player-matching.service.ts
 import { PrismaClient } from '@prisma/client';
-import { levenshteinDistance } from '../utils/string-utils';
+import { normalizePlayerName, calculateStringSimilarity } from '../utils/string-utils';
 
 export interface PlayerMatchResult {
   exactMatch?: string; // Player ID
@@ -21,17 +21,39 @@ export interface ExcelPlayerData {
   additionalData: Record<string, any>; // Dynamic columns
 }
 
+export interface BatchMatchResult {
+  autoMatched: Array<{
+    excelIndex: number;
+    playerId: string;
+    confidence: number;
+  }>;
+  needsReview: Array<{
+    excelIndex: number;
+    matches: PlayerMatchResult;
+  }>;
+  noMatches: Array<{
+    excelIndex: number;
+  }>;
+}
+
+interface DatabasePlayer {
+  id: string;
+  name: string;
+  position: string;
+  team: string | null;
+  sleeperId: string | null;
+  aliases: string[];
+  dataSource: string;
+}
+
 export class PlayerMatchingService {
   constructor(private prisma: PrismaClient) {}
 
   /**
-   * Smart player matching that handles variations in names
-   * Prioritizes Sleeper data but allows Excel supplements
+   * Batch match multiple players efficiently
    */
-  async findPlayerMatch(excelPlayer: ExcelPlayerData): Promise<PlayerMatchResult> {
-    const { name, position, team } = excelPlayer;
-    
-    // Get all players from database
+  async batchMatchPlayers(excelPlayers: ExcelPlayerData[]): Promise<BatchMatchResult> {
+    // Get all players once for efficiency
     const allPlayers = await this.prisma.player.findMany({
       select: {
         id: true,
@@ -44,8 +66,71 @@ export class PlayerMatchingService {
       }
     });
 
+    const result: BatchMatchResult = {
+      autoMatched: [],
+      needsReview: [],
+      noMatches: []
+    };
+
+    for (let i = 0; i < excelPlayers.length; i++) {
+      const matchResult = await this.findPlayerMatch(excelPlayers[i], allPlayers);
+      
+      if (matchResult.exactMatch) {
+        result.autoMatched.push({
+          excelIndex: i,
+          playerId: matchResult.exactMatch,
+          confidence: 1.0
+        });
+      } else if (matchResult.potentialMatches.length > 0) {
+        // Check if top match is highly confident
+        const topMatch = matchResult.potentialMatches[0];
+        if (topMatch.confidence >= 0.9) {
+          result.autoMatched.push({
+            excelIndex: i,
+            playerId: topMatch.playerId,
+            confidence: topMatch.confidence
+          });
+        } else {
+          result.needsReview.push({
+            excelIndex: i,
+            matches: matchResult
+          });
+        }
+      } else {
+        result.noMatches.push({
+          excelIndex: i
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Smart player matching that handles variations in names
+   * Prioritizes Sleeper data but allows Excel supplements
+   */
+  async findPlayerMatch(
+    excelPlayer: ExcelPlayerData, 
+    allPlayers?: DatabasePlayer[]
+  ): Promise<PlayerMatchResult> {
+    const { name, position, team } = excelPlayer;
+    
+    // Get all players from database if not provided
+    const players = allPlayers || await this.prisma.player.findMany({
+      select: {
+        id: true,
+        name: true,
+        position: true,
+        team: true,
+        sleeperId: true,
+        aliases: true,
+        dataSource: true
+      }
+    });
+
     // Step 1: Try exact match first
-    const exactMatch = allPlayers.find(p => 
+    const exactMatch = players.find(p => 
       this.normalizedNamesMatch(p.name, name) &&
       (!position || p.position === position?.toUpperCase())
     );
@@ -60,8 +145,8 @@ export class PlayerMatchingService {
     }
 
     // Step 2: Check aliases
-    const aliasMatch = allPlayers.find(p => 
-      p.aliases.some(alias => this.normalizedNamesMatch(alias, name))
+    const aliasMatch = players.find(p => 
+      p.aliases.some((alias: string) => this.normalizedNamesMatch(alias, name))
     );
 
     if (aliasMatch) {
@@ -74,59 +159,70 @@ export class PlayerMatchingService {
     }
 
     // Step 3: Fuzzy matching with confidence scoring
-    const potentialMatches = allPlayers
+    const potentialMatches = players
       .map(player => {
-        const nameScore = this.calculateNameSimilarity(player.name, name);
+        const nameScore = calculateStringSimilarity(
+          normalizePlayerName(player.name), 
+          normalizePlayerName(name)
+        );
         const reasons: string[] = [];
         let confidence = nameScore;
+
+        // Must have decent name similarity to be considered
+        if (nameScore < 0.6) return null;
 
         // Boost confidence for position match
         if (position && player.position === position.toUpperCase()) {
           confidence += 0.2;
           reasons.push('Position matches');
+        } else if (position && player.position !== position.toUpperCase()) {
+          confidence -= 0.1;
+          reasons.push('Position differs');
         }
 
         // Boost confidence for team match
         if (team && player.team === team.toUpperCase()) {
           confidence += 0.1;
           reasons.push('Team matches');
+        } else if (team && player.team && player.team !== team.toUpperCase()) {
+          confidence -= 0.05;
+          reasons.push('Team differs');
         }
 
-        // Boost confidence for Sleeper players (source of truth)
+        // Boost confidence for Sleeper players (more trusted)
         if (player.sleeperId) {
           confidence += 0.05;
-          reasons.push('From Sleeper API');
+          reasons.push('Has Sleeper data');
         }
 
-        // Handle common name variations
-        if (this.checkCommonVariations(player.name, name)) {
-          confidence += 0.3;
-          reasons.push('Common name variation');
+        // Penalty for Excel-only players when matching Excel data
+        if (player.dataSource === 'excel') {
+          confidence -= 0.05;
+          reasons.push('Excel-sourced player');
         }
+
+        reasons.push(`Name similarity: ${Math.round(nameScore * 100)}%`);
 
         return {
           playerId: player.id,
           playerName: player.name,
-          confidence,
+          confidence: Math.min(1, Math.max(0, confidence)),
           reasons
         };
       })
-      .filter(match => match.confidence > 0.6) // Only show reasonable matches
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 5); // Top 5 matches
+      .filter(match => match !== null)
+      .sort((a, b) => b!.confidence - a!.confidence)
+      .slice(0, 5) // Top 5 matches
+      .filter((match): match is NonNullable<typeof match> => match !== null);
 
     // Determine if manual review is needed
-    const topMatch = potentialMatches[0];
-    const isAmbiguous = potentialMatches.length > 1 && 
-      topMatch && 
-      potentialMatches[1].confidence > topMatch.confidence - 0.2;
+    const requiresManualReview = potentialMatches.length > 1 && 
+      (potentialMatches[0].confidence - potentialMatches[1].confidence) < 0.2;
 
-    const requiresManualReview = !topMatch || 
-      topMatch.confidence < 0.85 || 
-      isAmbiguous;
+    const isAmbiguous = potentialMatches.length > 1 && 
+      potentialMatches.filter(m => m.confidence > 0.8).length > 1;
 
     return {
-      exactMatch: topMatch && topMatch.confidence > 0.9 ? topMatch.playerId : undefined,
       potentialMatches,
       isAmbiguous,
       requiresManualReview
@@ -134,212 +230,131 @@ export class PlayerMatchingService {
   }
 
   /**
-   * Batch process Excel data with smart matching
+   * Create a new player from Excel data
    */
-  async batchMatchPlayers(excelData: ExcelPlayerData[]): Promise<{
-    autoMatched: Array<{ excelIndex: number; playerId: string; confidence: number }>;
-    needsReview: Array<{ excelIndex: number; player: ExcelPlayerData; matches: PlayerMatchResult }>;
-    noMatches: Array<{ excelIndex: number; player: ExcelPlayerData }>;
-  }> {
-    const autoMatched: Array<{ excelIndex: number; playerId: string; confidence: number }> = [];
-    const needsReview: Array<{ excelIndex: number; player: ExcelPlayerData; matches: PlayerMatchResult }> = [];
-    const noMatches: Array<{ excelIndex: number; player: ExcelPlayerData }> = [];
+  async createPlayerFromExcel(playerData: ExcelPlayerData): Promise<string> {
+    const { name, position, team, additionalData } = playerData;
 
-    for (let i = 0; i < excelData.length; i++) {
-      const player = excelData[i];
-      const matchResult = await this.findPlayerMatch(player);
-
-      if (matchResult.exactMatch) {
-        autoMatched.push({
-          excelIndex: i,
-          playerId: matchResult.exactMatch,
-          confidence: 1.0
-        });
-      } else if (matchResult.potentialMatches.length > 0) {
-        needsReview.push({
-          excelIndex: i,
-          player,
-          matches: matchResult
-        });
-      } else {
-        noMatches.push({
-          excelIndex: i,
-          player
-        });
-      }
+    // Basic validation
+    if (!name?.trim()) {
+      throw new Error('Player name is required');
     }
 
-    return { autoMatched, needsReview, noMatches };
+    const player = await this.prisma.player.create({
+      data: {
+        name: normalizePlayerName(name),
+        position: position?.toUpperCase() || 'UNKNOWN',
+        team: team?.toUpperCase(),
+        dataSource: 'excel',
+        sleeperId: null,
+        // Map additional data to player fields
+        rank: additionalData.rank ? Number(additionalData.rank) : null,
+        customRank: additionalData.customRank ? Number(additionalData.customRank) : null,
+        projectedPoints: additionalData.projectedPoints ? Number(additionalData.projectedPoints) : null,
+        vorp: additionalData.vorp ? Number(additionalData.vorp) : null,
+        adp: additionalData.adp ? Number(additionalData.adp) : null,
+        byeWeek: additionalData.byeWeek ? Number(additionalData.byeWeek) : null,
+        isDrafted: false,
+        aliases: [],
+        lastSyncAt: new Date()
+      }
+    });
+
+    return player.id;
   }
 
   /**
-   * Apply Excel data to matched players
-   * Only updates non-core fields to preserve Sleeper data integrity
+   * Check if two normalized names match
    */
-  async applyExcelDataToPlayer(
-    playerId: string, 
-    excelData: ExcelPlayerData,
-    updateStrategy: 'merge' | 'overwrite' = 'merge'
-  ): Promise<void> {
-    const existingPlayer = await this.prisma.player.findUnique({
-      where: { id: playerId },
-      include: { notes: true, playerTags: true }
-    });
-
-    if (!existingPlayer) {
-      throw new Error(`Player with ID ${playerId} not found`);
-    }
-
-    // Define which fields can be updated from Excel
-    const allowedUpdates: Record<string, any> = {};
-    const { additionalData } = excelData;
-
-    // Handle dynamic additional data
-    Object.entries(additionalData).forEach(([key, value]) => {
-      if (this.isAllowedField(key) && value !== null && value !== undefined) {
-        const fieldName = this.mapExcelFieldToPlayerField(key);
-        if (fieldName) {
-          allowedUpdates[fieldName] = value;
-        }
-      }
-    });
-
-    // Always preserve Sleeper core data if it exists
-    if (existingPlayer.sleeperId && updateStrategy === 'merge') {
-      // Only allow supplemental fields for Sleeper players
-      const supplementalFields = ['customRank', 'vorp', 'adp'];
-      Object.keys(allowedUpdates).forEach(key => {
-        if (!supplementalFields.includes(key)) {
-          delete allowedUpdates[key];
-        }
-      });
-    }
-
-    // Update the player
-    if (Object.keys(allowedUpdates).length > 0) {
-      await this.prisma.player.update({
-        where: { id: playerId },
-        data: {
-          ...allowedUpdates,
-          lastSyncAt: new Date()
-        }
-      });
-    }
-
-    // Add name to aliases if it's different
-    if (!this.normalizedNamesMatch(existingPlayer.name, excelData.name)) {
-      const newAliases = [...existingPlayer.aliases, excelData.name];
-      await this.prisma.player.update({
-        where: { id: playerId },
-        data: { aliases: newAliases }
-      });
-    }
-  }
-
-  /**
-   * Create new player from Excel data (for unmatched players)
-   */
-  async createPlayerFromExcel(excelData: ExcelPlayerData): Promise<string> {
-    const { name, position, team, additionalData } = excelData;
-
-    const playerData: any = {
-      name: name.trim(),
-      position: position?.toUpperCase() || 'UNKNOWN',
-      team: team?.toUpperCase() || null,
-      dataSource: 'excel',
-      lastSyncAt: new Date(),
-      aliases: []
-    };
-
-    // Map additional data to player fields
-    Object.entries(additionalData).forEach(([key, value]) => {
-      if (this.isAllowedField(key) && value !== null && value !== undefined) {
-        const fieldName = this.mapExcelFieldToPlayerField(key);
-        if (fieldName) {
-          playerData[fieldName] = value;
-        }
-      }
-    });
-
-    const newPlayer = await this.prisma.player.create({
-      data: playerData
-    });
-
-    return newPlayer.id;
-  }
-
-  // Helper methods
   private normalizedNamesMatch(name1: string, name2: string): boolean {
-    return this.normalizeName(name1) === this.normalizeName(name2);
-  }
-
-  private normalizeName(name: string): string {
-    return name
-      .toLowerCase()
-      .replace(/[^\w\s]/g, '') // Remove punctuation
-      .replace(/\s+/g, ' ') // Normalize spaces
-      .trim();
-  }
-
-  private calculateNameSimilarity(name1: string, name2: string): number {
-    const norm1 = this.normalizeName(name1);
-    const norm2 = this.normalizeName(name2);
-
-    if (norm1 === norm2) return 1.0;
-
-    // Use Levenshtein distance for similarity
-    const maxLength = Math.max(norm1.length, norm2.length);
-    const distance = levenshteinDistance(norm1, norm2);
-    return 1 - (distance / maxLength);
-  }
-
-  private checkCommonVariations(dbName: string, excelName: string): boolean {
-    const variations = [
-      // Jr/Junior variations
-      [/\s+jr\.?$/i, /\s+junior$/i],
-      [/\s+sr\.?$/i, /\s+senior$/i],
-      // Roman numerals
-      [/\s+ii$/i, /\s+2$/],
-      [/\s+iii$/i, /\s+3$/],
-      // Common nicknames would go here
-      // This could be expanded with a nickname dictionary
-    ];
-
-    return variations.some(([pattern1, pattern2]) => {
-      const name1Clean = dbName.replace(pattern1, '').trim();
-      const name2Clean = excelName.replace(pattern2, '').trim();
-      return this.normalizedNamesMatch(name1Clean, name2Clean) ||
-             this.normalizedNamesMatch(name2Clean, name1Clean);
-    });
-  }
-
-  private isAllowedField(excelFieldName: string): boolean {
-    // Define which Excel fields are allowed to update player data
-    const allowedFields = [
-      'rank', 'customrank', 'projected', 'projectedpoints', 'points',
-      'vorp', 'adp', 'byeweek', 'bye', 'lastseason', 'notes', 'tier'
-    ];
+    const norm1 = normalizePlayerName(name1);
+    const norm2 = normalizePlayerName(name2);
     
-    return allowedFields.some(field => 
-      excelFieldName.toLowerCase().includes(field.toLowerCase())
-    );
+    // Exact match
+    if (norm1 === norm2) return true;
+    
+    // Handle common variations (Jr., Sr., II, III, etc.)
+    const clean1 = norm1.replace(/\s+(jr|sr|ii|iii|iv|v)\.?$/i, '');
+    const clean2 = norm2.replace(/\s+(jr|sr|ii|iii|iv|v)\.?$/i, '');
+    
+    if (clean1 === clean2) return true;
+    
+    // Handle first name variations (e.g., "Chris" vs "Christopher")
+    const parts1 = norm1.split(' ');
+    const parts2 = norm2.split(' ');
+    
+    if (parts1.length >= 2 && parts2.length >= 2) {
+      // Same last name and similar first names
+      if (parts1[parts1.length - 1] === parts2[parts2.length - 1]) {
+        const firstName1 = parts1[0];
+        const firstName2 = parts2[0];
+        
+        // One name starts with the other (e.g., "Chris" and "Christopher")
+        if (firstName1.startsWith(firstName2) || firstName2.startsWith(firstName1)) {
+          return Math.min(firstName1.length, firstName2.length) >= 3;
+        }
+      }
+    }
+    
+    return false;
   }
 
-  private mapExcelFieldToPlayerField(excelFieldName: string): string | null {
-    const fieldMap: Record<string, string> = {
-      'rank': 'customRank',
-      'customrank': 'customRank',
-      'projected': 'projectedPoints',
-      'projectedpoints': 'projectedPoints',
-      'points': 'projectedPoints',
-      'vorp': 'vorp',
-      'adp': 'adp',
-      'byeweek': 'byeWeek',
-      'bye': 'byeWeek',
-      'lastseason': 'lastSeasonPoints'
-    };
+  /**
+   * Update player with Excel data
+   */
+  async updatePlayerWithExcelData(
+    playerId: string,
+    excelData: Record<string, any>,
+    options: {
+      updateStrategy: 'merge' | 'overwrite';
+      preserveSleeperData: boolean;
+    }
+  ): Promise<string[]> {
+    const player = await this.prisma.player.findUnique({
+      where: { id: playerId }
+    });
 
-    const normalizedField = excelFieldName.toLowerCase().replace(/[^a-z]/g, '');
-    return fieldMap[normalizedField] || null;
+    if (!player) {
+      throw new Error('Player not found');
+    }
+
+    const updateData: any = {};
+    const fieldsChanged: string[] = [];
+
+    // Define which fields can be updated based on settings
+    const updatableFields = options.preserveSleeperData && player.sleeperId ? 
+      ['customRank', 'vorp'] : // Only custom fields if preserving Sleeper data
+      ['rank', 'customRank', 'projectedPoints', 'vorp', 'adp', 'byeWeek', 'team'];
+
+    for (const field of updatableFields) {
+      const newValue = excelData[field];
+      const currentValue = (player as any)[field];
+
+      if (newValue != null && newValue !== currentValue) {
+        if (options.updateStrategy === 'overwrite' || currentValue == null) {
+          updateData[field] = typeof newValue === 'string' && !isNaN(Number(newValue)) ? 
+            Number(newValue) : newValue;
+          fieldsChanged.push(field);
+        } else if (options.updateStrategy === 'merge') {
+          // For merge, only update if current value is null/empty
+          if (currentValue == null || currentValue === '' || currentValue === 0) {
+            updateData[field] = typeof newValue === 'string' && !isNaN(Number(newValue)) ? 
+              Number(newValue) : newValue;
+            fieldsChanged.push(field);
+          }
+        }
+      }
+    }
+
+    if (fieldsChanged.length > 0) {
+      updateData.lastSyncAt = new Date();
+      
+      await this.prisma.player.update({
+        where: { id: playerId },
+        data: updateData
+      });
+    }
+
+    return fieldsChanged;
   }
 }

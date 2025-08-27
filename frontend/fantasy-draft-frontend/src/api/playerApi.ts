@@ -28,6 +28,7 @@ export interface Player {
   lastSyncAt: string | null;
   depthChartPosition?: string;
   depthChartOrder?: number;
+  importSessionId?: string | null;
 }
 
 export interface Tier {
@@ -63,22 +64,98 @@ export interface ImportOptions {
   preserveSleeperData?: boolean;
 }
 
+export interface ColumnMapping {
+  excelColumn: string;
+  mappedTo: string | null;
+  dataType: string;
+  sampleValue: any;
+  willImport: boolean;
+  customMapping?: string;
+}
+
+export interface PlayerPreview {
+  excelRowIndex: number;
+  name: string;
+  position?: string;
+  team?: string;
+  matchType: 'exact' | 'fuzzy' | 'manual' | 'new';
+  matchedPlayer?: {
+    id: string;
+    name: string;
+    currentData: Record<string, any>;
+  };
+  newData: Record<string, any>;
+  willImport: boolean;
+  conflicts: string[];
+}
+
+export interface ImportSession {
+  id: string;
+  timestamp: string;
+  summary: {
+    totalProcessed: number;
+    playersModified: number;
+    playersCreated: number;
+    fieldsChanged: number;
+  };
+  changes: Array<{
+    playerId: string;
+    playerName: string;
+    action: 'create' | 'update';
+    oldData?: Record<string, any>;
+    newData: Record<string, any>;
+    fieldsChanged: string[];
+  }>;
+}
+
 export const playerApi = {
-  // Enhanced import with smart matching
+  // Basic player operations
+  getPlayers: (filters?: {
+    scoring?: 'PPR' | 'Standard';
+    includeDrafted?: boolean;
+    dataSource?: 'sleeper' | 'excel' | 'manual';
+    position?: string;
+    team?: string;
+    hasSleeperId?: boolean;
+    search?: string;
+  }) => {
+    return api.get('/players', { params: filters });
+  },
+
+  getPlayer: (id: string) => {
+    return api.get(`/players/${id}`);
+  },
+
+  updatePlayer: (id: string, data: Partial<Player>) => {
+    return api.put(`/players/${id}`, data);
+  },
+
+  deletePlayer: (id: string) => {
+    return api.delete(`/players/${id}`);
+  },
+
+  // Enhanced import with smart matching (Simple mode)
   importPlayers: (formData: FormData) => {
     return api.post('/players/import', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
 
-  // Get import preview
+  // Get import preview (Simple mode)
   getImportPreview: (formData: FormData) => {
     return api.post('/players/import/preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
 
-  // Advanced import with detailed control
+  // Execute enhanced import (Simple mode)
+  executeEnhancedImport: (formData: FormData) => {
+    return api.post('/players/import/enhanced-execute', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  // Advanced import with detailed control (Advanced mode)
   getAdvancedImportPreview: (formData: FormData) => {
     return api.post('/players/import/advanced-preview', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -91,6 +168,7 @@ export const playerApi = {
     });
   },
 
+  // Import management
   rollbackImport: (sessionId: string) => {
     return api.post(`/players/import/rollback/${sessionId}`);
   },
@@ -100,131 +178,159 @@ export const playerApi = {
       params: { limit }
     });
   },
-  
-  // Enhanced player fetching with filters
-  getPlayers: (filters?: {
-    scoring?: 'PPR' | 'Standard';
-    includeDrafted?: boolean;
-    dataSource?: 'sleeper' | 'excel' | 'manual';
-    position?: string;
-    team?: string;
-    hasSleeperId?: boolean;
-  }) => {
-    return api.get('/players', { params: filters });
+
+  getImportStats: () => {
+    return api.get('/players/import/stats');
   },
 
-  getPlayer: (id: string) => {
-    return api.get(`/players/${id}`);
-  },
-
-  // FAST UPDATE - for simple field changes (no relations loaded)
-  updatePlayerQuick: (id: string, data: Partial<Pick<Player, 'customRank' | 'projectedPoints' | 'vorp' | 'adp' | 'rank' | 'byeWeek'>>) => {
-    return api.patch(`/players/${id}/quick`, data);
-  },
-
-  // FULL UPDATE - for complex updates that need all relations
-  updatePlayer: (id: string, data: Partial<Player>) => {
-    return api.patch(`/players/${id}`, data);
-  },
-
-  deletePlayer: (id: string) => {
-    return api.delete(`/players/${id}`);
-  },
-
-  updatePlayerRanking: (id: string, rank: number) => {
-    return api.patch(`/players/${id}/rank`, { rank });
-  },
-
-  toggleDraftStatus: (id: string, isDrafted: boolean) => {
-    return api.patch(`/players/${id}/draft`, { isDrafted });
-  },
-
-  assignPlayerToTier: (id: string, tierId: string | null) => {
-    return api.patch(`/players/${id}/tier`, { tierId });
-  },
-
-  exportPlayers: () => {
-    return api.get('/players/export', {
-      responseType: 'blob',
-      timeout: 60000,
-    });
-  },
-
-  // Note management
-  addNote: (playerId: string, content: string, color: string = '#6B7280') => {
-    return api.post(`/players/${playerId}/notes`, { content, color });
-  },
-
-  updateNote: (noteId: string, content?: string, color?: string) => {
-    return api.patch(`/players/notes/${noteId}`, { content, color });
-  },
-
-  deleteNote: (noteId: string) => {
-    return api.delete(`/players/notes/${noteId}`);
-  },
-
-  // Tag management
-  getTags: () => {
-    return api.get('/players/tags/all');
-  },
-
-  createTag: (name: string, color: string) => {
-    return api.post('/players/tags', { name, color });
-  },
-
-  updateTag: (tagId: string, name?: string, color?: string) => {
-    return api.patch(`/players/tags/${tagId}`, { name, color });
-  },
-
-  deleteTag: (tagId: string) => {
-    return api.delete(`/players/tags/${tagId}`);
-  },
-
-  // Tier management (assuming similar endpoints exist)
+  // Player tiers
   getTiers: () => {
-    return api.get('/players/tiers/all');
+    return api.get('/tiers');
   },
 
-  createTier: (name: string, color: string, order: number) => {
-    return api.post('/players/tiers', { name, color, order });
+  createTier: (data: { name: string; color: string; order: number }) => {
+    return api.post('/tiers', data);
   },
 
-  updateTier: (tierId: string, name?: string, color?: string, order?: number) => {
-    return api.patch(`/players/tiers/${tierId}`, { name, color, order });
+  updateTier: (id: string, data: Partial<Tier>) => {
+    return api.put(`/tiers/${id}`, data);
   },
 
-  deleteTier: (tierId: string) => {
-    return api.delete(`/players/tiers/${tierId}`);
+  deleteTier: (id: string) => {
+    return api.delete(`/tiers/${id}`);
   },
 
-  addTagToPlayer: (playerId: string, tagId: string) => {
-    return api.post(`/players/${playerId}/tags/${tagId}`);
+  // Player tags
+  getTags: () => {
+    return api.get('/tags');
   },
 
-  removeTagFromPlayer: (playerId: string, tagId: string) => {
+  createTag: (data: { name: string; color: string }) => {
+    return api.post('/tags', data);
+  },
+
+  updateTag: (id: string, data: Partial<Tag>) => {
+    return api.put(`/tags/${id}`, data);
+  },
+
+  deleteTag: (id: string) => {
+    return api.delete(`/tags/${id}`);
+  },
+
+  // Player tag associations
+  addPlayerTag: (playerId: string, tagId: string) => {
+    return api.post(`/players/${playerId}/tags`, { tagId });
+  },
+
+  removePlayerTag: (playerId: string, tagId: string) => {
     return api.delete(`/players/${playerId}/tags/${tagId}`);
   },
 
+  // Player notes
+  addPlayerNote: (playerId: string, data: { content: string; color?: string }) => {
+    return api.post(`/players/${playerId}/notes`, data);
+  },
+
+  updatePlayerNote: (playerId: string, noteId: string, data: { content: string; color?: string }) => {
+    return api.put(`/players/${playerId}/notes/${noteId}`, data);
+  },
+
+  deletePlayerNote: (playerId: string, noteId: string) => {
+    return api.delete(`/players/${playerId}/notes/${noteId}`);
+  },
+
+  // Draft operations
+  draftPlayer: (playerId: string, data?: { position?: number; round?: number }) => {
+    return api.post(`/players/${playerId}/draft`, data);
+  },
+
+  undraftPlayer: (playerId: string) => {
+    return api.post(`/players/${playerId}/undraft`);
+  },
+
   // Bulk operations
-  bulkToggleDraft: (playerIds: string[], isDrafted: boolean) => {
-    return api.post('/players/bulk/draft', { playerIds, isDrafted });
+  bulkUpdatePlayers: (playerIds: string[], data: Partial<Player>) => {
+    return api.post('/players/bulk-update', { playerIds, data });
   },
 
-  bulkAssignTier: (playerIds: string[], tierId: string | null) => {
-    return api.post('/players/bulk/tier', { playerIds, tierId });
+  bulkDeletePlayers: (playerIds: string[]) => {
+    return api.post('/players/bulk-delete', { playerIds });
   },
 
-  // Statistics
-  getPlayerStats: () => {
-    return api.get('/players/stats/summary');
+  bulkDraftPlayers: (playerIds: string[]) => {
+    return api.post('/players/bulk-draft', { playerIds });
   },
 
-  // Legacy methods for backward compatibility
-  updatePlayerNotes: (id: string, notes: string[]) => {
-    return api.patch(`/players/${id}/notes`, { notes });
+  // Search and filtering
+  searchPlayers: (query: string, filters?: {
+    position?: string;
+    team?: string;
+    isDrafted?: boolean;
+    limit?: number;
+  }) => {
+    return api.get('/players/search', { 
+      params: { q: query, ...filters }
+    });
   },
 
-  updatePlayerTags: (id: string, tags: string[]) => {
-    return api.patch(`/players/${id}/tags`, { tags });
+  // Statistics and analytics
+  getPlayerStats: (playerId: string) => {
+    return api.get(`/players/${playerId}/stats`);
+  },
+
+  getPositionStats: (position: string) => {
+    return api.get(`/players/position-stats/${position}`);
+  },
+
+  getDraftAnalytics: () => {
+    return api.get('/players/draft-analytics');
+  },
+
+  // Sleeper integration
+  syncWithSleeper: (options?: {
+    sport?: string;
+    season?: string;
+    week?: string;
+    positions?: string[];
+  }) => {
+    return api.post('/players/sleeper-sync', options);
+  },
+
+  // Export functionality
+  exportPlayers: (format: 'csv' | 'excel' | 'json', filters?: any) => {
+    return api.get('/players/export', {
+      params: { format, ...filters },
+      responseType: 'blob'
+    });
+  },
+
+  // Custom rankings
+  updateCustomRankings: (rankings: Array<{ playerId: string; rank: number }>) => {
+    return api.post('/players/custom-rankings', { rankings });
+  },
+
+  clearCustomRankings: () => {
+    return api.delete('/players/custom-rankings');
+  },
+
+  // Comparison tools
+  comparePlayers: (playerIds: string[]) => {
+    return api.post('/players/compare', { playerIds });
+  },
+
+  // Player suggestions
+  getSimilarPlayers: (playerId: string, limit?: number) => {
+    return api.get(`/players/${playerId}/similar`, {
+      params: { limit }
+    });
+  },
+
+  getRecommendations: (filters?: {
+    position?: string;
+    team?: string;
+    maxAdp?: number;
+    minProjection?: number;
+  }) => {
+    return api.get('/players/recommendations', { params: filters });
   }
 };

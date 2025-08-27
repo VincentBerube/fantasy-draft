@@ -262,134 +262,157 @@ export class EnhancedPlayerImportService {
       position?: string;
       confidence: number;
       potentialMatch?: {
-        playerName: string;
+        name: string;
         confidence: number;
-        isSleeperPlayer: boolean;
       };
-      additionalFields: Record<string, any>;
     }>;
     summary: {
       totalRows: number;
-      validPlayers: number;
       recognizedColumns: number;
-      unknownColumns: number;
-      estimatedAutoMatches: number;
+      estimatedMatches: number;
       estimatedNewPlayers: number;
     };
     warnings: string[];
   }> {
-    const preview = await this.excelParser.generateImportPreview(filePath);
-    
-    // Sample a few players for match preview
-    const samplePlayers = preview.samplePlayers.slice(0, 3);
-    const playerSamples = [];
-
-    for (const sample of samplePlayers) {
-      const matchResult = await this.playerMatcher.findPlayerMatch({
-        name: sample.name,
-        position: sample.position,
-        additionalData: { ...sample.recognizedFields, ...sample.unknownFields }
-      });
-
-      const potentialMatch = matchResult.potentialMatches[0];
-      
-      playerSamples.push({
-        name: sample.name,
-        position: sample.position,
-        confidence: 0.8, // Base confidence from parsing
-        potentialMatch: potentialMatch ? {
-          playerName: potentialMatch.playerName,
-          confidence: potentialMatch.confidence,
-          isSleeperPlayer: potentialMatch.reasons.includes('From Sleeper API')
-        } : undefined,
-        additionalFields: { ...sample.recognizedFields, ...sample.unknownFields }
-      });
-    }
-
-    return {
-      columnAnalysis: preview.columnMapping.map(col => ({
-        header: col.header,
-        mappedTo: col.mappedTo,
-        dataType: col.dataType,
-        sampleValue: col.sampleValue,
-        willBeProcessed: col.mappedTo !== null
-      })),
-      playerSamples,
-      summary: {
-        ...preview.summary,
-        estimatedAutoMatches: Math.floor(preview.summary.validPlayers * 0.7), // Rough estimate
-        estimatedNewPlayers: Math.floor(preview.summary.validPlayers * 0.2)
-      },
-      warnings: preview.warnings
-    };
-  }
-
-  /**
-   * Resolve manual matches
-   */
-  async resolveManualMatch(
-    excelRowIndex: number,
-    selectedPlayerId: string,
-    excelData: Record<string, any>,
-    options: Partial<ImportOptions> = {}
-  ): Promise<{ success: boolean; fieldsUpdated: string[]; error?: string }> {
     try {
-      const defaultOptions: ImportOptions = {
-        updateStrategy: 'merge',
-        autoMatchThreshold: 0.85,
-        createNewPlayers: true,
-        preserveSleeperData: true
+      // Get column analysis
+      const columnAnalysis = await this.excelParser.getColumnAnalysis(filePath);
+      
+      // Parse a sample of players for preview
+      const sampleData = await this.excelParser.parseExcelFile(filePath);
+      const samplePlayers = sampleData.players.slice(0, 10); // First 10 players
+      
+      // Quick match for preview
+      const playerSamples = [];
+      for (const player of samplePlayers) {
+        const matchResult = await this.playerMatcher.findPlayerMatch({
+          name: player.name,
+          position: player.position,
+          team: player.team,
+          additionalData: player.additionalData
+        });
+
+        playerSamples.push({
+          name: player.name,
+          position: player.position,
+          confidence: player.confidence,
+          potentialMatch: matchResult.exactMatch ? {
+            name: 'Exact match found',
+            confidence: 1.0
+          } : matchResult.potentialMatches[0] ? {
+            name: matchResult.potentialMatches[0].playerName,
+            confidence: matchResult.potentialMatches[0].confidence
+          } : undefined
+        });
+      }
+
+      // Generate warnings
+      const warnings: string[] = [];
+      if (columnAnalysis.columns.filter(c => c.mappedField === 'name').length === 0) {
+        warnings.push('No player name column detected');
+      }
+      
+      const recognizedColumns = columnAnalysis.columns.filter(c => c.mappedField !== null).length;
+      if (recognizedColumns < 3) {
+        warnings.push('Very few columns recognized automatically - consider manual mapping');
+      }
+
+      return {
+        columnAnalysis: columnAnalysis.columns.map(col => ({
+          header: col.header,
+          mappedTo: col.mappedField,
+          dataType: col.dataType,
+          sampleValue: col.sampleValues[0] || null,
+          willBeProcessed: col.mappedField !== null
+        })),
+        playerSamples,
+        summary: {
+          totalRows: sampleData.metadata.totalRows,
+          recognizedColumns,
+          estimatedMatches: Math.floor(sampleData.metadata.validRows * 0.8),
+          estimatedNewPlayers: Math.floor(sampleData.metadata.validRows * 0.2)
+        },
+        warnings
       };
 
-      const finalOptions = { ...defaultOptions, ...options };
-
-      // Create a mock excel player for the matching service
-      const mockExcelPlayer = {
-        name: 'Manual Match',
-        additionalData: excelData
-      };
-
-      const fieldsUpdated = await this.updatePlayerFromExcel(
-        selectedPlayerId,
-        mockExcelPlayer as any,
-        finalOptions
-      );
-
-      return { success: true, fieldsUpdated };
     } catch (error: any) {
-      return { success: false, fieldsUpdated: [], error: error.message };
+      throw new Error(`Preview generation failed: ${error.message}`);
     }
   }
 
   /**
-   * Update player with Excel data
+   * Update a player with Excel data
    */
   private async updatePlayerFromExcel(
     playerId: string,
     excelPlayer: any,
     options: ImportOptions
   ): Promise<string[]> {
-    const fieldsUpdated: string[] = [];
-
-    // Apply Excel data to player
-    await this.playerMatcher.applyExcelDataToPlayer(
+    return await this.playerMatcher.updatePlayerWithExcelData(
       playerId,
+      excelPlayer.additionalData,
       {
-        name: excelPlayer.name,
-        position: excelPlayer.position,
-        team: excelPlayer.team,
-        additionalData: excelPlayer.additionalData
-      },
-      options.updateStrategy
+        updateStrategy: options.updateStrategy,
+        preserveSleeperData: options.preserveSleeperData
+      }
     );
+  }
 
-    // Track which fields were updated
-    Object.keys(excelPlayer.additionalData).forEach(key => {
-      if (excelPlayer.additionalData[key] !== null && excelPlayer.additionalData[key] !== undefined) {
-        fieldsUpdated.push(key);
+  /**
+   * Validate import options
+   */
+  private validateImportOptions(options: ImportOptions): void {
+    if (options.autoMatchThreshold < 0 || options.autoMatchThreshold > 1) {
+      throw new Error('Auto-match threshold must be between 0 and 1');
+    }
+
+    if (!['merge', 'overwrite'].includes(options.updateStrategy)) {
+      throw new Error('Update strategy must be either "merge" or "overwrite"');
+    }
+  }
+
+  /**
+   * Get import statistics for reporting
+   */
+  async getImportStats(): Promise<{
+    totalImports: number;
+    totalPlayersProcessed: number;
+    averageMatchRate: number;
+    lastImportDate?: Date;
+  }> {
+    const importSessions = await this.prisma.importSession.findMany({
+      select: {
+        summary: true,
+        createdAt: true
+      },
+      orderBy: {
+        createdAt: 'desc'
       }
     });
 
-    return fieldsUpdated;
+    if (importSessions.length === 0) {
+      return {
+        totalImports: 0,
+        totalPlayersProcessed: 0,
+        averageMatchRate: 0
+      };
+    }
+
+    const totalProcessed = importSessions.reduce((sum, session) => {
+      const summary = session.summary as any;
+      return sum + (summary.totalProcessed || 0);
+    }, 0);
+
+    const totalMatched = importSessions.reduce((sum, session) => {
+      const summary = session.summary as any;
+      return sum + (summary.playersModified || 0) + (summary.playersCreated || 0);
+    }, 0);
+
+    return {
+      totalImports: importSessions.length,
+      totalPlayersProcessed: totalProcessed,
+      averageMatchRate: totalProcessed > 0 ? totalMatched / totalProcessed : 0,
+      lastImportDate: importSessions[0]?.createdAt
+    };
   }
 }
