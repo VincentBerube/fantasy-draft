@@ -37,7 +37,8 @@ export function TagManager({ tags, players, onClose, onUpdate }: TagManagerProps
     
     setIsLoading(true);
     try {
-      await playerApi.createTag(newTagName.trim(), newTagColor);
+      // Use existing createTag method signature
+      await playerApi.createTag({ name: newTagName.trim(), color: newTagColor });
       setNewTagName('');
       setNewTagColor('#3B82F6');
       onUpdate();
@@ -53,7 +54,11 @@ export function TagManager({ tags, players, onClose, onUpdate }: TagManagerProps
     
     setIsLoading(true);
     try {
-      await playerApi.updateTag(editingTag.id, editingTag.name, editingTag.color);
+      // Use existing updateTag method signature
+      await playerApi.updateTag(editingTag.id, { 
+        name: editingTag.name, 
+        color: editingTag.color 
+      });
       setEditingTag(null);
       onUpdate();
     } catch (error) {
@@ -84,7 +89,7 @@ export function TagManager({ tags, players, onClose, onUpdate }: TagManagerProps
     try {
       await Promise.all(
         Array.from(selectedPlayers).map(playerId => 
-          playerApi.addTagToPlayer(playerId, selectedTag)
+          playerApi.addPlayerTag(playerId, selectedTag)
         )
       );
       setSelectedPlayers(new Set());
@@ -104,7 +109,7 @@ export function TagManager({ tags, players, onClose, onUpdate }: TagManagerProps
     try {
       await Promise.all(
         Array.from(selectedPlayers).map(playerId => 
-          playerApi.removeTagFromPlayer(playerId, selectedTag)
+          playerApi.removePlayerTag(playerId, selectedTag)
         )
       );
       setSelectedPlayers(new Set());

@@ -36,7 +36,12 @@ export function TierManager({ tiers, onClose, onUpdate }: TierManagerProps) {
     try {
       // Get the next order number
       const maxOrder = Math.max(...tiers.map(t => t.order), 0);
-      await playerApi.createTier(newTierName.trim(), newTierColor, maxOrder + 1);
+      // Use existing createTier method signature
+      await playerApi.createTier({ 
+        name: newTierName.trim(), 
+        color: newTierColor, 
+        order: maxOrder + 1 
+      });
       setNewTierName('');
       setNewTierColor('#8B5CF6');
       onUpdate();
@@ -52,7 +57,12 @@ export function TierManager({ tiers, onClose, onUpdate }: TierManagerProps) {
     
     setIsLoading(true);
     try {
-      await playerApi.updateTier(editingTier.id, editingTier.name, editingTier.color, editingTier.order);
+      // Use existing updateTier method signature
+      await playerApi.updateTier(editingTier.id, {
+        name: editingTier.name,
+        color: editingTier.color,
+        order: editingTier.order
+      });
       setEditingTier(null);
       onUpdate();
     } catch (error) {
@@ -84,10 +94,10 @@ export function TierManager({ tiers, onClose, onUpdate }: TierManagerProps) {
     
     setIsLoading(true);
     try {
-      // Swap the orders
+      // Swap the orders using existing updateTier method
       await Promise.all([
-        playerApi.updateTier(tier.id, tier.name, tier.color, prevTier.order),
-        playerApi.updateTier(prevTier.id, prevTier.name, prevTier.color, tier.order)
+        playerApi.updateTier(tier.id, { order: prevTier.order }),
+        playerApi.updateTier(prevTier.id, { order: tier.order })
       ]);
       onUpdate();
     } catch (error) {
@@ -105,10 +115,10 @@ export function TierManager({ tiers, onClose, onUpdate }: TierManagerProps) {
     
     setIsLoading(true);
     try {
-      // Swap the orders
+      // Swap the orders using existing updateTier method
       await Promise.all([
-        playerApi.updateTier(tier.id, tier.name, tier.color, nextTier.order),
-        playerApi.updateTier(nextTier.id, nextTier.name, nextTier.color, tier.order)
+        playerApi.updateTier(tier.id, { order: nextTier.order }),
+        playerApi.updateTier(nextTier.id, { order: tier.order })
       ]);
       onUpdate();
     } catch (error) {

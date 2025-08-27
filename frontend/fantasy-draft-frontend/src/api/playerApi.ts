@@ -25,7 +25,7 @@ api.interceptors.response.use(
   }
 );
 
-// Type definitions
+// Complete Player interface with all required fields
 export interface Player {
   id: string;
   name: string;
@@ -34,8 +34,12 @@ export interface Player {
   byeWeek: number | null;
   rank: number | null;
   customRank: number | null;
+  positionalRank: string | null;
   projectedPoints: number | null;
+  vorp: number | null;
   adp: number | null;
+  lastSeasonPoints: number | null;
+  aliases: string[];
   isDrafted: boolean;
   draftedAt: Date | null;
   sleeperId: string | null;
@@ -49,6 +53,7 @@ export interface Player {
   notes: Note[];
   createdAt: Date;
   updatedAt: Date;
+  importSessionId?: string | null;
 }
 
 export interface Tier {
@@ -81,8 +86,8 @@ export interface Note {
   playerId: string;
   content: string;
   color: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ImportResult {
@@ -93,6 +98,57 @@ export interface ImportResult {
   conflicts: Array<{
     excelData: Record<string, any>;
     potentialMatches: Player[];
+  }>;
+}
+
+export interface ImportOptions {
+  updateStrategy?: 'merge' | 'overwrite';
+  autoMatchThreshold?: number;
+  createNewPlayers?: boolean;
+  preserveSleeperData?: boolean;
+}
+
+export interface ColumnMapping {
+  excelColumn: string;
+  mappedTo: string | null;
+  dataType: string;
+  sampleValue: any;
+  willImport: boolean;
+  customMapping?: string;
+}
+
+export interface PlayerPreview {
+  excelRowIndex: number;
+  name: string;
+  position?: string;
+  team?: string;
+  matchType: 'exact' | 'fuzzy' | 'manual' | 'new';
+  matchedPlayer?: {
+    id: string;
+    name: string;
+    currentData: Record<string, any>;
+  };
+  newData: Record<string, any>;
+  willImport: boolean;
+  conflicts: string[];
+}
+
+export interface ImportSession {
+  id: string;
+  timestamp: string;
+  summary: {
+    totalProcessed: number;
+    playersModified: number;
+    playersCreated: number;
+    fieldsChanged: number;
+  };
+  changes: Array<{
+    playerId: string;
+    playerName: string;
+    action: 'create' | 'update';
+    oldData?: Record<string, any>;
+    newData: Record<string, any>;
+    fieldsChanged: string[];
   }>;
 }
 
@@ -119,6 +175,10 @@ export const playerApi = {
     return api.put(`/players/${id}`, data);
   },
 
+  updatePlayerQuick: (id: string, data: Partial<Player>) => {
+    return api.put(`/players/${id}`, data);
+  },
+
   deletePlayer: (id: string) => {
     return api.delete(`/players/${id}`);
   },
@@ -132,6 +192,10 @@ export const playerApi = {
     return api.put(`/players/${id}`, { isDrafted });
   },
 
+  toggleDraftStatus: (playerId: string, isDrafted: boolean) => {
+    return api.put(`/players/${playerId}`, { isDrafted });
+  },
+
   // Import/Export operations
   importFromExcel: (formData: FormData, mergeStrategy: "update" | "preserve" = "update") => {
     return api.post('/players/import/excel', formData, {
@@ -143,6 +207,50 @@ export const playerApi = {
     });
   },
 
+  // Enhanced import with smart matching (Simple mode)
+  importPlayers: (formData: FormData) => {
+    return api.post('/players/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  // Get import preview (Simple mode)
+  getImportPreview: (formData: FormData) => {
+    return api.post('/players/import/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  // Execute enhanced import (Simple mode)
+  executeEnhancedImport: (formData: FormData) => {
+    return api.post('/players/import/enhanced-execute', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  // Advanced import with detailed control (Advanced mode)
+  getAdvancedImportPreview: (formData: FormData) => {
+    return api.post('/players/import/advanced-preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  executeAdvancedImport: (formData: FormData) => {
+    return api.post('/players/import/advanced-execute', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  // Manual matching resolution
+  resolveManualMatch: (data: {
+    excelRowIndex: number;
+    selectedPlayerId: string;
+    excelData: Record<string, any>;
+    options: any;
+  }) => {
+    return api.post('/players/resolve-manual-match', data);
+  },
+
   resolveConflict: (data: {
     excelRowIndex: number;
     selectedPlayerId: string;
@@ -152,8 +260,19 @@ export const playerApi = {
     return api.post('/players/import/resolve', data);
   },
 
+  // Import management
+  rollbackImport: (sessionId: string) => {
+    return api.post(`/players/import/rollback/${sessionId}`);
+  },
+
   exportToExcel: () => {
     return api.get('/players/export/excel', {
+      responseType: 'blob'
+    });
+  },
+
+  exportPlayers: (format: string = 'excel') => {
+    return api.get(`/players/export/${format}`, {
       responseType: 'blob'
     });
   },
@@ -191,20 +310,16 @@ export const playerApi = {
     return api.get('/players/import/stats');
   },
 
-  // Player tiers
+  // Player tiers - Keep existing signatures that work with the backend
   getTiers: () => {
     return api.get('/tiers');
   },
 
-  createTier: (name: string, color: string, order: number) => {
-    return api.post('/tiers', { name, color, order });
+  createTier: (data: { name: string; color: string; order: number }) => {
+    return api.post('/tiers', data);
   },
 
-  updateTier: (id: string, name?: string, color?: string, order?: number) => {
-    const data: any = {};
-    if (name !== undefined) data.name = name;
-    if (color !== undefined) data.color = color;
-    if (order !== undefined) data.order = order;
+  updateTier: (id: string, data: Partial<Tier>) => {
     return api.put(`/tiers/${id}`, data);
   },
 
@@ -217,19 +332,16 @@ export const playerApi = {
     return api.put(`/players/${playerId}`, { tierId });
   },
 
-  // Player tags
+  // Player tags - Keep existing signatures that work with the backend
   getTags: () => {
     return api.get('/tags');
   },
 
-  createTag: (name: string, color: string) => {
-    return api.post('/tags', { name, color });
+  createTag: (data: { name: string; color: string }) => {
+    return api.post('/tags', data);
   },
 
-  updateTag: (id: string, name?: string, color?: string) => {
-    const data: any = {};
-    if (name !== undefined) data.name = name;
-    if (color !== undefined) data.color = color;
+  updateTag: (id: string, data: Partial<Tag>) => {
     return api.put(`/tags/${id}`, data);
   },
 
@@ -237,16 +349,29 @@ export const playerApi = {
     return api.delete(`/tags/${id}`);
   },
 
-  // Player tag associations - Fixed method names to match backend
-  addTagToPlayer: (playerId: string, tagId: string) => {
+  // Player tag associations - Keep existing method names
+  addPlayerTag: (playerId: string, tagId: string) => {
     return api.post(`/players/${playerId}/tags`, { tagId });
   },
 
-  removeTagFromPlayer: (playerId: string, tagId: string) => {
+  removePlayerTag: (playerId: string, tagId: string) => {
     return api.delete(`/players/${playerId}/tags/${tagId}`);
   },
 
-  // Player notes - Fixed method names to match backend
+  // Player notes - Keep existing method names that components use
+  addPlayerNote: (playerId: string, data: { content: string; color?: string }) => {
+    return api.post(`/players/${playerId}/notes`, data);
+  },
+
+  updatePlayerNote: (playerId: string, noteId: string, data: { content: string; color?: string }) => {
+    return api.put(`/players/${playerId}/notes/${noteId}`, data);
+  },
+
+  deletePlayerNote: (playerId: string, noteId: string) => {
+    return api.delete(`/players/${playerId}/notes/${noteId}`);
+  },
+
+  // Additional note methods for NoteManager that might call the backend directly
   addNote: (playerId: string, content: string, color: string = '#6B7280') => {
     return api.post(`/players/${playerId}/notes`, { content, color });
   },
@@ -260,6 +385,15 @@ export const playerApi = {
 
   deleteNote: (noteId: string) => {
     return api.delete(`/notes/${noteId}`);
+  },
+
+  // Additional tag methods for TagManager compatibility
+  addTagToPlayer: (playerId: string, tagId: string) => {
+    return api.post(`/players/${playerId}/tags`, { tagId });
+  },
+
+  removeTagFromPlayer: (playerId: string, tagId: string) => {
+    return api.delete(`/players/${playerId}/tags/${tagId}`);
   },
 
   // Bulk operations

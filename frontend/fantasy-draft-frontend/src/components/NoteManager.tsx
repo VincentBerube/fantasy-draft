@@ -52,7 +52,11 @@ export function NoteManager({ playerId, onClose, onUpdate }: NoteManagerProps) {
     
     setIsSaving(true);
     try {
-      const response = await playerApi.addNote(playerId, newNoteContent.trim(), newNoteColor);
+      // Use existing addPlayerNote method
+      const response = await playerApi.addPlayerNote(playerId, { 
+        content: newNoteContent.trim(), 
+        color: newNoteColor 
+      });
       setNotes(prev => [...prev, response.data]);
       setNewNoteContent('');
       setNewNoteColor('#6B7280');
@@ -69,10 +73,14 @@ export function NoteManager({ playerId, onClose, onUpdate }: NoteManagerProps) {
     
     setIsSaving(true);
     try {
-      const response = await playerApi.updateNote(
+      // Use existing updatePlayerNote method
+      const response = await playerApi.updatePlayerNote(
+        playerId,
         editingNote.id, 
-        editingNote.content, 
-        editingNote.color
+        { 
+          content: editingNote.content, 
+          color: editingNote.color 
+        }
       );
       setNotes(prev => prev.map(note => 
         note.id === editingNote.id ? response.data : note
@@ -91,7 +99,8 @@ export function NoteManager({ playerId, onClose, onUpdate }: NoteManagerProps) {
     
     setIsSaving(true);
     try {
-      await playerApi.deleteNote(noteId);
+      // Use existing deletePlayerNote method
+      await playerApi.deletePlayerNote(playerId, noteId);
       setNotes(prev => prev.filter(note => note.id !== noteId));
       onUpdate();
     } catch (error) {
@@ -101,8 +110,9 @@ export function NoteManager({ playerId, onClose, onUpdate }: NoteManagerProps) {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (date: string | Date) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    return dateObj.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
