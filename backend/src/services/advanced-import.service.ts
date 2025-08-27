@@ -89,50 +89,70 @@ export class AdvancedImportService {
       for (let i = 0; i < mappedPlayers.length; i++) {
         const playerData = mappedPlayers[i];
         
-        // Find potential matches
-        const matches = await this.playerMatcher.findPotentialMatches(
-          playerData.name,
-          playerData.position,
-          playerData.team
+        // Find potential matches - use the correct method name
+        const matches = await this.playerMatcher.findPlayerMatch(
+          {
+            name: playerData.name,
+            position: playerData.position,
+            team: playerData.team,
+            additionalData: playerData.additionalData
+          }
         );
 
         let preview: AdvancedPlayerPreview;
 
-        if (matches.exactMatches.length > 0) {
-          // Exact match found
-          const existingPlayer = matches.exactMatches[0];
+        if (matches.exactMatch) {
+          // Exact match found - get the player data
+          const existingPlayer = await this.prisma.player.findUnique({
+            where: { id: matches.exactMatch },
+            include: {
+              tier: true,
+              playerTags: { include: { tag: true } },
+              notes: true
+            }
+          });
+
           preview = {
             excelRowIndex: playerData.rowIndex,
             name: playerData.name,
             position: playerData.position,
             team: playerData.team,
             matchType: 'exact',
-            matchedPlayer: {
+            matchedPlayer: existingPlayer ? {
               id: existingPlayer.id,
               name: existingPlayer.name,
               currentData: this.extractPlayerData(existingPlayer)
-            },
+            } : undefined,
             newData: playerData.additionalData,
             willImport: true,
-            conflicts: this.detectConflicts(existingPlayer, playerData.additionalData)
+            conflicts: existingPlayer ? this.detectConflicts(existingPlayer, playerData.additionalData) : []
           };
         } else if (matches.potentialMatches.length > 0) {
           // Fuzzy matches available
           const topMatch = matches.potentialMatches[0];
+          const existingPlayer = await this.prisma.player.findUnique({
+            where: { id: topMatch.playerId },
+            include: {
+              tier: true,
+              playerTags: { include: { tag: true } },
+              notes: true
+            }
+          });
+
           preview = {
             excelRowIndex: playerData.rowIndex,
             name: playerData.name,
             position: playerData.position,
             team: playerData.team,
             matchType: 'fuzzy',
-            matchedPlayer: {
-              id: topMatch.player.id,
-              name: topMatch.player.name,
-              currentData: this.extractPlayerData(topMatch.player)
-            },
+            matchedPlayer: existingPlayer ? {
+              id: existingPlayer.id,
+              name: existingPlayer.name,
+              currentData: this.extractPlayerData(existingPlayer)
+            } : undefined,
             newData: playerData.additionalData,
             willImport: false, // Require user confirmation for fuzzy matches
-            conflicts: this.detectConflicts(topMatch.player, playerData.additionalData)
+            conflicts: existingPlayer ? this.detectConflicts(existingPlayer, playerData.additionalData) : []
           };
         } else {
           // No matches - would create new player

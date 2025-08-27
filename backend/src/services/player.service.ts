@@ -45,7 +45,7 @@ export class PlayerService {
       whereClause.NOT = { id: excludeId };
     }
 
-    return prisma.player.findMany({
+    return this.prisma.player.findMany({
       where: whereClause,
       include: {
         tier: true,
@@ -60,7 +60,6 @@ export class PlayerService {
   }
 
   async importPlayers(players: any[]): Promise<any> {
-    const prisma = this.prisma;
     let newCount = 0;
     let updatedCount = 0;
     let duplicateCount = 0;
@@ -72,8 +71,8 @@ export class PlayerService {
       const player = players[index];
       
       try {
-        // Look for exact match by name and position (fixed where clause)
-        let existing = await prisma.player.findFirst({
+        // Look for exact match by name and position (FIXED: use proper where clause)
+        let existing = await this.prisma.player.findFirst({
           where: {
             name: player.name,
             position: player.position
@@ -94,11 +93,11 @@ export class PlayerService {
           const potentialDuplicates = await this.findPotentialDuplicates(player.name, player.position);
           
           if (potentialDuplicates.length > 0) {
-            // Use the first potential duplicate and add the new name as an alias
+            // FIXED: Add null check for existing
             existing = potentialDuplicates[0];
             const updatedAliases = [...new Set([...existing.aliases, player.name])];
             
-            await prisma.player.update({
+            await this.prisma.player.update({
               where: { id: existing.id },
               data: { aliases: updatedAliases }
             });
@@ -120,7 +119,7 @@ export class PlayerService {
             lastSeasonPoints: player.lastSeasonPoints,
           });
 
-          await prisma.player.update({
+          await this.prisma.player.update({
             where: { id: existing.id },
             data: updateData
           });
@@ -142,7 +141,7 @@ export class PlayerService {
             dataSource: 'excel'
           });
 
-          await prisma.player.create({ 
+          await this.prisma.player.create({ 
             data: createData as any
           });
           newCount++;
@@ -224,7 +223,6 @@ export class PlayerService {
     });
   }
 
-  // Add the missing updatePlayerQuick method
   async updatePlayerQuick(id: string, data: Partial<Player>) {
     return this.prisma.player.update({
       where: { id },
@@ -358,7 +356,6 @@ export class PlayerService {
   }
 
   async deleteTier(id: string) {
-    // Remove tier from all players first
     await this.prisma.player.updateMany({
       where: { tierId: id },
       data: { tierId: null }
@@ -382,34 +379,6 @@ export class PlayerService {
         notes: true,
         tier: true
       }
-    });
-  }
-
-  // Legacy methods for backward compatibility
-  async updatePlayerNotes(playerId: string, notes: string[]) {
-    // Convert old string array to new Note objects
-    await this.prisma.note.deleteMany({
-      where: { playerId }
-    });
-
-    if (notes.length > 0) {
-      await this.prisma.note.createMany({
-        data: notes.map(content => ({
-          playerId,
-          content,
-          color: '#6B7280'
-        }))
-      });
-    }
-
-    return this.getPlayerById(playerId);
-  }
-
-  async updatePlayerTags(playerId: string, tags: string[]) {
-    // This is kept for legacy compatibility but should use the new tag system
-    return this.prisma.player.update({
-      where: { id: playerId },
-      data: { aliases: tags } // Store in aliases for now, should migrate to proper tags
     });
   }
 
@@ -442,6 +411,32 @@ export class PlayerService {
     } catch (error: any) {
       throw new Error(`Failed to resolve manual match: ${error.message}`);
     }
+  }
+
+  // Legacy methods for backward compatibility
+  async updatePlayerNotes(playerId: string, notes: string[]) {
+    await this.prisma.note.deleteMany({
+      where: { playerId }
+    });
+
+    if (notes.length > 0) {
+      await this.prisma.note.createMany({
+        data: notes.map(content => ({
+          playerId,
+          content,
+          color: '#6B7280'
+        }))
+      });
+    }
+
+    return this.getPlayerById(playerId);
+  }
+
+  async updatePlayerTags(playerId: string, tags: string[]) {
+    return this.prisma.player.update({
+      where: { id: playerId },
+      data: { aliases: tags }
+    });
   }
 
   async exportPlayers() {

@@ -1,9 +1,10 @@
 // backend/src/routes/sleeper.route.ts
 import { Router } from 'express';
 import { sleeperAPIService, SleeperSyncOptions } from '../services/sleeper-api.service';
-import { prisma } from '../database';
+import { PrismaClient } from '@prisma/client';
 
 const router = Router();
+const prisma = new PrismaClient();
 
 /**
  * Sync players from Sleeper API to our database
@@ -203,17 +204,16 @@ router.get('/sync-preview', async (req, res) => {
         return true;
       }).length;
 
-    // Get current database stats
+    // Get current database stats - FIXED: Remove userNotes reference
     const currentPlayerCount = await prisma.player.count();
     const draftedCount = await prisma.player.count({
       where: { isDrafted: true }
     });
     const withNotesCount = await prisma.player.count({
       where: { 
-        OR: [
-          { userNotes: { isEmpty: false } },
-          { notes: { some: {} } }
-        ]
+        notes: { 
+          some: {} 
+        }
       }
     });
 
