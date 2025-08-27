@@ -1,3 +1,4 @@
+// frontend/fantasy-draft-frontend/src/components/PlayerImport.tsx
 import { useState } from 'react';
 import { playerApi } from '../api/playerApi';
 
@@ -29,7 +30,11 @@ export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void
     setImportResult(null);
     
     try {
-      const response = await playerApi.importPlayers(file, mergeStrategy);
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Fixed: Pass mergeStrategy as second parameter, not in FormData
+      const response = await playerApi.importFromExcel(formData, mergeStrategy);
       
       // Success response
       setMessage({
@@ -182,89 +187,79 @@ export function PlayerImport({ onImportSuccess }: { onImportSuccess?: () => void
       </form>
       
       {message && (
-        <div className={`mt-6 p-4 rounded-lg ${message.isError ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
-          <div className={`font-medium ${message.isError ? 'text-red-800' : 'text-green-800'}`}>
-            {message.isError ? '❌ Import Failed' : '✅ Import Successful'}
-          </div>
-          <p className={`mt-1 ${message.isError ? 'text-red-700' : 'text-green-700'}`}>
-            {message.text}
-          </p>
-          
-          {!message.isError && importResult && (
-            <div className="mt-4 space-y-4">
-              {/* Summary Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div className="bg-white p-3 rounded border">
-                  <div className="font-medium text-gray-900">📊 Total</div>
-                  <div className="text-2xl font-bold text-gray-800">{importResult.total}</div>
-                  <div className="text-xs text-gray-600">processed</div>
-                </div>
-                
-                <div className="bg-white p-3 rounded border">
-                  <div className="font-medium text-green-900">✨ New</div>
-                  <div className="text-2xl font-bold text-green-600">{importResult.newCount}</div>
-                  <div className="text-xs text-gray-600">players added</div>
-                </div>
+        <div className={`mt-6 p-4 rounded-lg ${message.isError ? 'bg-red-100 border border-red-400 text-red-700' : 'bg-green-100 border border-green-400 text-green-700'}`}>
+          <p className="font-medium">{message.text}</p>
+        </div>
+      )}
 
-                <div className="bg-white p-3 rounded border">
-                  <div className="font-medium text-blue-900">🔄 Updated</div>
-                  <div className="text-2xl font-bold text-blue-600">{importResult.updatedCount}</div>
-                  <div className="text-xs text-gray-600">players updated</div>
-                </div>
-
-                {importResult.duplicateCount !== undefined && importResult.duplicateCount > 0 && (
-                  <div className="bg-white p-3 rounded border">
-                    <div className="font-medium text-orange-900">🔗 Duplicates</div>
-                    <div className="text-2xl font-bold text-orange-600">{importResult.duplicateCount}</div>
-                    <div className="text-xs text-gray-600">handled</div>
-                  </div>
-                )}
+      {/* Import Results Summary */}
+      {importResult && (
+        <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <h3 className="font-semibold mb-3 text-blue-800">Import Summary</h3>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="font-medium">Total Processed:</span> {importResult.total}
+            </div>
+            <div>
+              <span className="font-medium">New Players:</span> {importResult.newCount}
+            </div>
+            <div>
+              <span className="font-medium">Updated:</span> {importResult.updatedCount}
+            </div>
+            <div>
+              <span className="font-medium">Errors:</span> {importResult.errorCount}
+            </div>
+            {importResult.duplicateCount !== undefined && (
+              <div>
+                <span className="font-medium">Duplicates:</span> {importResult.duplicateCount}
               </div>
+            )}
+            {importResult.mergedCount !== undefined && (
+              <div>
+                <span className="font-medium">Merged:</span> {importResult.mergedCount}
+              </div>
+            )}
+          </div>
 
-              {/* Duplicate Warnings */}
-              {importResult.duplicateWarnings && importResult.duplicateWarnings.length > 0 && (
-                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-                  <div className="font-medium text-orange-800 mb-2">🔗 Duplicate Detection</div>
-                  <div className="text-sm text-orange-700 space-y-1 max-h-32 overflow-y-auto">
-                    {importResult.duplicateWarnings.map((warning, index) => (
-                      <div key={index}>• {warning}</div>
-                    ))}
-                  </div>
-                  <div className="text-xs text-orange-600 mt-2">
-                    These players were detected as potential duplicates and merged automatically.
-                  </div>
-                </div>
-              )}
+          {/* Error Details */}
+          {importResult.errors && importResult.errors.length > 0 && (
+            <div className="mt-4">
+              <h4 className="font-medium text-red-700 mb-2">Errors:</h4>
+              <ul className="text-sm text-red-600 space-y-1 max-h-32 overflow-y-auto">
+                {importResult.errors.map((error, index) => (
+                  <li key={index} className="list-disc list-inside">
+                    {error}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
-              {/* Errors */}
-              {importResult.errorCount > 0 && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <div className="font-medium text-red-800 mb-2">⚠️ Import Errors ({importResult.errorCount})</div>
-                  <div className="text-sm text-red-700 space-y-1 max-h-32 overflow-y-auto">
-                    {importResult.errors.slice(0, 5).map((error, index) => (
-                      <div key={index}>• {error}</div>
-                    ))}
-                    {importResult.errors.length > 5 && (
-                      <div>• ... and {importResult.errors.length - 5} more errors</div>
-                    )}
-                  </div>
-                </div>
-              )}
+          {/* Duplicate Warnings */}
+          {importResult.duplicateWarnings && importResult.duplicateWarnings.length > 0 && (
+            <div className="mt-4">
+              <h4 className="font-medium text-yellow-700 mb-2">Duplicate Warnings:</h4>
+              <ul className="text-sm text-yellow-600 space-y-1 max-h-32 overflow-y-auto">
+                {importResult.duplicateWarnings.map((warning, index) => (
+                  <li key={index} className="list-disc list-inside">
+                    {warning}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
       )}
 
-      {/* Help Section */}
-      <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-        <h3 className="font-medium text-blue-900 mb-2">📋 Import Guidelines</h3>
-        <ul className="text-sm text-blue-800 space-y-1">
-          <li>• Expected columns: RK, OVERALL PLAYER, POS, POS RK, BYE, FPS, VORP, TEAM, ADP</li>
-          <li>• Player name and position are required for each row</li>
-          <li>• <strong>New:</strong> Automatic duplicate detection using fuzzy matching</li>
-          <li>• Similar player names (e.g., "Josh Allen" vs "J. Allen") are merged automatically</li>
-          <li>• Your custom notes, tags, tiers, and draft status are always preserved</li>
-          <li>• Use "Update Mode" for refreshing rankings, "Preserve Mode" for adding new data only</li>
+      {/* Import Guidelines */}
+      <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+        <h3 className="font-medium mb-2 text-gray-800">Import Guidelines:</h3>
+        <ul className="text-sm text-gray-600 space-y-1">
+          <li>• Excel file should contain columns like: Name, Position, Team, Rank, Points, ADP</li>
+          <li>• Player names will be automatically matched with existing data</li>
+          <li>• Existing draft status, notes, and tags will be preserved</li>
+          <li>• Update mode overwrites data, Preserve mode only fills missing fields</li>
+          <li>• Large files may take a few moments to process</li>
         </ul>
       </div>
     </div>

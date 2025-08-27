@@ -1,36 +1,54 @@
 // frontend/fantasy-draft-frontend/src/api/playerApi.ts
 import axios from 'axios';
 
+// Configure axios
 const api = axios.create({
   baseURL: 'http://localhost:3001/api',
-  timeout: 60000, // 60 second timeout for imports
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
 
+// Request interceptor for logging
+api.interceptors.request.use((config) => {
+  console.log(`🌐 ${config.method?.toUpperCase()} ${config.url}`, config.data || config.params);
+  return config;
+});
+
+// Response interceptor for error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    console.error('API Error:', error.response?.data || error.message);
+    return Promise.reject(error);
+  }
+);
+
+// Type definitions
 export interface Player {
   id: string;
   name: string;
   position: string;
   team: string | null;
-  projectedPoints: number | null;
   byeWeek: number | null;
   rank: number | null;
   customRank: number | null;
-  positionalRank: string | null;  // Added missing field
-  vorp: number | null;
+  projectedPoints: number | null;
   adp: number | null;
-  lastSeasonPoints: number | null;  // Added missing field
-  aliases: string[];
   isDrafted: boolean;
+  draftedAt: Date | null;
+  sleeperId: string | null;
+  dataSource: 'sleeper' | 'excel' | 'manual';
+  lastSyncAt: Date | null;
+  depthChartPosition: string | null;
+  depthChartOrder: number | null;
   tierId: string | null;
-  tier?: Tier;
+  tier?: Tier | null;
   playerTags: PlayerTag[];
   notes: Note[];
-  sleeperId: string | null;
-  dataSource: string;
-  lastSyncAt: string | null;
-  depthChartPosition?: string;
-  depthChartOrder?: number;
-  importSessionId?: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Tier {
@@ -38,80 +56,49 @@ export interface Tier {
   name: string;
   color: string;
   order: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Tag {
   id: string;
   name: string;
   color: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface PlayerTag {
   id: string;
+  playerId: string;
+  tagId: string;
   tag: Tag;
+  createdAt: Date;
 }
 
 export interface Note {
   id: string;
+  playerId: string;
   content: string;
   color: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export interface ImportOptions {
-  updateStrategy?: 'merge' | 'overwrite';
-  autoMatchThreshold?: number;
-  createNewPlayers?: boolean;
-  preserveSleeperData?: boolean;
-}
-
-export interface ColumnMapping {
-  excelColumn: string;
-  mappedTo: string | null;
-  dataType: string;
-  sampleValue: any;
-  willImport: boolean;
-  customMapping?: string;
-}
-
-export interface PlayerPreview {
-  excelRowIndex: number;
-  name: string;
-  position?: string;
-  team?: string;
-  matchType: 'exact' | 'fuzzy' | 'manual' | 'new';
-  matchedPlayer?: {
-    id: string;
-    name: string;
-    currentData: Record<string, any>;
-  };
-  newData: Record<string, any>;
-  willImport: boolean;
-  conflicts: string[];
-}
-
-export interface ImportSession {
-  id: string;
-  timestamp: string;
-  summary: {
-    totalProcessed: number;
-    playersModified: number;
-    playersCreated: number;
-    fieldsChanged: number;
-  };
-  changes: Array<{
-    playerId: string;
-    playerName: string;
-    action: 'create' | 'update';
-    oldData?: Record<string, any>;
-    newData: Record<string, any>;
-    fieldsChanged: string[];
+export interface ImportResult {
+  matched: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  conflicts: Array<{
+    excelData: Record<string, any>;
+    potentialMatches: Player[];
   }>;
 }
 
+// Main API object
 export const playerApi = {
-  // Basic player operations
+  // Basic CRUD operations
   getPlayers: (filters?: {
     scoring?: 'PPR' | 'Standard';
     includeDrafted?: boolean;
@@ -132,78 +119,69 @@ export const playerApi = {
     return api.put(`/players/${id}`, data);
   },
 
-  // Add missing updatePlayerQuick method
-  updatePlayerQuick: (id: string, data: Partial<Player>) => {
-    return api.put(`/players/${id}`, data);
-  },
-
   deletePlayer: (id: string) => {
     return api.delete(`/players/${id}`);
   },
 
-  // Draft operations
-  toggleDraftStatus: (playerId: string, isDrafted: boolean) => {
-    return api.put(`/players/${playerId}`, { isDrafted });
+  createPlayer: (data: Omit<Player, 'id' | 'createdAt' | 'updatedAt'>) => {
+    return api.post('/players', data);
   },
 
-  draftPlayer: (playerId: string, data?: { position?: number; round?: number }) => {
-    return api.post(`/players/${playerId}/draft`, data);
+  // Draft management
+  toggleDraft: (id: string, isDrafted: boolean) => {
+    return api.put(`/players/${id}`, { isDrafted });
   },
 
-  undraftPlayer: (playerId: string) => {
-    return api.post(`/players/${playerId}/undraft`);
-  },
-
-  // Enhanced import with smart matching (Simple mode)
-  importPlayers: (formData: FormData) => {
-    return api.post('/players/import', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+  // Import/Export operations
+  importFromExcel: (formData: FormData, mergeStrategy: "update" | "preserve" = "update") => {
+    return api.post('/players/import/excel', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      params: { mergeStrategy }, // Pass as query parameter
+      timeout: 60000, // 1 minute for large files
     });
   },
 
-  // Get import preview (Simple mode)
-  getImportPreview: (formData: FormData) => {
-    return api.post('/players/import/preview', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-
-  // Execute enhanced import (Simple mode)
-  executeEnhancedImport: (formData: FormData) => {
-    return api.post('/players/import/enhanced-execute', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-
-  // Advanced import with detailed control (Advanced mode)
-  getAdvancedImportPreview: (formData: FormData) => {
-    return api.post('/players/import/advanced-preview', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-
-  executeAdvancedImport: (formData: FormData) => {
-    return api.post('/players/import/advanced-execute', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-
-  // Manual matching resolution
-  resolveManualMatch: (data: {
+  resolveConflict: (data: {
     excelRowIndex: number;
     selectedPlayerId: string;
     excelData: Record<string, any>;
     options: any;
   }) => {
-    return api.post('/players/resolve-manual-match', data);
+    return api.post('/players/import/resolve', data);
   },
 
-  // Import management
-  rollbackImport: (sessionId: string) => {
-    return api.post(`/players/import/rollback/${sessionId}`);
+  exportToExcel: () => {
+    return api.get('/players/export/excel', {
+      responseType: 'blob'
+    });
   },
 
-  getImportHistory: (limit?: number) => {
+  // Sleeper integration
+  syncWithSleeper: (options?: {
+    sport?: string;
+    season?: string;
+    week?: string;
+    positions?: string[];
+    mergeStrategy?: "update" | "preserve";
+  }) => {
+    return api.post('/players/sync/sleeper', options || {}, {
+      timeout: 120000, // 2 minutes for sync
+    });
+  },
+
+  getSleeperPlayers: (options?: {
+    sport?: string;
+    season?: string;
+    week?: string;
+    positions?: string[];
+  }) => {
+    return api.get('/players/sleeper', { params: options });
+  },
+
+  // Import history and stats
+  getImportHistory: (limit: number) => {
     return api.get('/players/import/history', {
       params: { limit }
     });
@@ -218,11 +196,15 @@ export const playerApi = {
     return api.get('/tiers');
   },
 
-  createTier: (data: { name: string; color: string; order: number }) => {
-    return api.post('/tiers', data);
+  createTier: (name: string, color: string, order: number) => {
+    return api.post('/tiers', { name, color, order });
   },
 
-  updateTier: (id: string, data: Partial<Tier>) => {
+  updateTier: (id: string, name?: string, color?: string, order?: number) => {
+    const data: any = {};
+    if (name !== undefined) data.name = name;
+    if (color !== undefined) data.color = color;
+    if (order !== undefined) data.order = order;
     return api.put(`/tiers/${id}`, data);
   },
 
@@ -240,11 +222,14 @@ export const playerApi = {
     return api.get('/tags');
   },
 
-  createTag: (data: { name: string; color: string }) => {
-    return api.post('/tags', data);
+  createTag: (name: string, color: string) => {
+    return api.post('/tags', { name, color });
   },
 
-  updateTag: (id: string, data: Partial<Tag>) => {
+  updateTag: (id: string, name?: string, color?: string) => {
+    const data: any = {};
+    if (name !== undefined) data.name = name;
+    if (color !== undefined) data.color = color;
     return api.put(`/tags/${id}`, data);
   },
 
@@ -252,26 +237,29 @@ export const playerApi = {
     return api.delete(`/tags/${id}`);
   },
 
-  // Player tag associations
-  addPlayerTag: (playerId: string, tagId: string) => {
+  // Player tag associations - Fixed method names to match backend
+  addTagToPlayer: (playerId: string, tagId: string) => {
     return api.post(`/players/${playerId}/tags`, { tagId });
   },
 
-  removePlayerTag: (playerId: string, tagId: string) => {
+  removeTagFromPlayer: (playerId: string, tagId: string) => {
     return api.delete(`/players/${playerId}/tags/${tagId}`);
   },
 
-  // Player notes
-  addPlayerNote: (playerId: string, data: { content: string; color?: string }) => {
-    return api.post(`/players/${playerId}/notes`, data);
+  // Player notes - Fixed method names to match backend
+  addNote: (playerId: string, content: string, color: string = '#6B7280') => {
+    return api.post(`/players/${playerId}/notes`, { content, color });
   },
 
-  updatePlayerNote: (playerId: string, noteId: string, data: { content: string; color?: string }) => {
-    return api.put(`/players/${playerId}/notes/${noteId}`, data);
+  updateNote: (noteId: string, content?: string, color?: string) => {
+    const data: any = {};
+    if (content !== undefined) data.content = content;
+    if (color !== undefined) data.color = color;
+    return api.put(`/notes/${noteId}`, data);
   },
 
-  deletePlayerNote: (playerId: string, noteId: string) => {
-    return api.delete(`/players/${playerId}/notes/${noteId}`);
+  deleteNote: (noteId: string) => {
+    return api.delete(`/notes/${noteId}`);
   },
 
   // Bulk operations
@@ -310,53 +298,5 @@ export const playerApi = {
 
   getDraftAnalytics: () => {
     return api.get('/players/draft-analytics');
-  },
-
-  // Sleeper integration
-  syncWithSleeper: (options?: {
-    sport?: string;
-    season?: string;
-    week?: string;
-    positions?: string[];
-  }) => {
-    return api.post('/players/sleeper-sync', options);
-  },
-
-  // Export functionality - fix the missing format parameter
-  exportPlayers: (format: 'csv' | 'excel' | 'json' = 'excel', filters?: any) => {
-    return api.get('/players/export', {
-      params: { format, ...filters },
-      responseType: 'blob'
-    });
-  },
-
-  // Custom rankings
-  updateCustomRankings: (rankings: Array<{ playerId: string; rank: number }>) => {
-    return api.post('/players/custom-rankings', { rankings });
-  },
-
-  clearCustomRankings: () => {
-    return api.delete('/players/custom-rankings');
-  },
-
-  // Comparison tools
-  comparePlayers: (playerIds: string[]) => {
-    return api.post('/players/compare', { playerIds });
-  },
-
-  // Player suggestions
-  getSimilarPlayers: (playerId: string, limit?: number) => {
-    return api.get(`/players/${playerId}/similar`, {
-      params: { limit }
-    });
-  },
-
-  getRecommendations: (filters?: {
-    position?: string;
-    team?: string;
-    maxAdp?: number;
-    minProjection?: number;
-  }) => {
-    return api.get('/players/recommendations', { params: filters });
   }
 };
