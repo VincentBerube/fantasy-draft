@@ -58,7 +58,7 @@ export const EnhancedPlayerList: React.FC = () => {
     byPosition: any[];
   } | null>(null);
 
-  // Load players with proper error handling
+  // Load players with proper error handling - FIXED: Remove arbitrary limits
   const fetchPlayers = useCallback(async () => {
     setIsLoading(true);
     setError('');
@@ -66,6 +66,7 @@ export const EnhancedPlayerList: React.FC = () => {
     try {
       const filterParams = {
         includeDrafted: filters.includeDrafted,
+        limit: 2000, // FIXED: Get all players, not just 100
         ...(filters.position && { position: filters.position }),
         ...(filters.team && { team: filters.team }),
         ...(filters.dataSource && { dataSource: filters.dataSource as any }),
@@ -80,6 +81,8 @@ export const EnhancedPlayerList: React.FC = () => {
       // Ensure we always set arrays, even if API returns unexpected data
       setPlayers(Array.isArray(playersResponse.data) ? playersResponse.data : []);
       setTiers(Array.isArray(tiersResponse.data) ? tiersResponse.data : []);
+      
+      console.log(`📊 Loaded ${playersResponse.data?.length || 0} players from API`);
     } catch (error: any) {
       console.error('Error fetching players:', error);
       setError('Failed to load players: ' + (error.response?.data?.error || error.message));
@@ -230,27 +233,53 @@ export const EnhancedPlayerList: React.FC = () => {
     }
   }, [players]);
 
-  // Handle Sleeper sync
+  // Handle Sleeper sync - FIXED VERSION
   const handleSleeperSync = useCallback(async () => {
     try {
       setIsLoading(true);
       setError('');
       
-      const syncOptions = {
+      console.log('🏈 Starting Sleeper sync...');
+      
+      // Use the correct API call
+      const response = await sleeperApi.syncPlayers({
         includeProjections: true,
         onlyActive: true,
         positionsFilter: ['QB', 'WR', 'RB', 'TE', 'K'],
         topPlayersLimit: 500
-      };
-
-      await sleeperApi.syncPlayers(syncOptions);
-      await fetchPlayers();
-      await fetchStats();
+      });
       
-      alert('Sleeper sync completed successfully!');
+      console.log('✅ Sleeper sync response:', response.data);
+
+      // Check if sync was successful
+      if (response.data.success) {
+        // Refresh all data after successful sync
+        await Promise.all([
+          fetchPlayers(),
+          fetchStats()
+        ]);
+        
+        const data = response.data.data;
+        alert(`Sleeper sync completed successfully!\n\nNew: ${data.newCount}\nUpdated: ${data.updatedCount}\nSkipped: ${data.skippedCount}\nTotal: ${data.total}`);
+      } else {
+        throw new Error(response.data.message || 'Sync failed');
+      }
+      
     } catch (error: any) {
-      console.error('Sleeper sync failed:', error);
-      setError('Sleeper sync failed: ' + (error.response?.data?.details || error.message));
+      console.error('❌ Sleeper sync failed:', error);
+      
+      let errorMessage = 'Sleeper sync failed';
+      
+      if (error.response?.data?.details) {
+        errorMessage = `Sleeper sync failed: ${error.response.data.details}`;
+      } else if (error.response?.data?.error) {
+        errorMessage = `Sleeper sync failed: ${error.response.data.error}`;
+      } else if (error.message) {
+        errorMessage = `Sleeper sync failed: ${error.message}`;
+      }
+      
+      setError(errorMessage);
+      alert(errorMessage);
     } finally {
       setIsLoading(false);
     }

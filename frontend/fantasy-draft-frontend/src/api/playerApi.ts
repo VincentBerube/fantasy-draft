@@ -1,65 +1,46 @@
 // frontend/fantasy-draft-frontend/src/api/playerApi.ts
 import axios from 'axios';
 
-// Configure axios
 const api = axios.create({
   baseURL: 'http://localhost:3001/api',
   timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
 
-// Request interceptor for logging
+// Add request interceptor for debugging
 api.interceptors.request.use((config) => {
-  console.log(`🌐 ${config.method?.toUpperCase()} ${config.url}`, config.data || config.params);
+  console.log(`🌐 ${config.method?.toUpperCase()} ${config.url}`, config.params);
   return config;
 });
 
-// Response interceptor for error handling and unwrapping success responses
-api.interceptors.response.use(
-  (response) => {
-    // Auto-unwrap successful responses that have the { success: true, data: ... } structure
-    if (response.data && response.data.success === true && response.data.data !== undefined) {
-      return { ...response, data: response.data.data };
-    }
-    return response;
-  },
-  (error) => {
-    console.error('API Error:', error.response?.data || error.message);
-    return Promise.reject(error);
-  }
-);
-
-// Complete Player interface with all required fields
+// Types - Fixed to match actual API responses
 export interface Player {
   id: string;
   name: string;
   position: string;
   team: string | null;
-  byeWeek: number | null;
   rank: number | null;
   customRank: number | null;
   positionalRank: string | null;
   projectedPoints: number | null;
   vorp: number | null;
   adp: number | null;
+  byeWeek: number | null;
   lastSeasonPoints: number | null;
-  aliases: string[];
-  isDrafted: boolean;
-  draftedAt: Date | null;
   sleeperId: string | null;
-  dataSource: 'sleeper' | 'excel' | 'manual';
+  dataSource: string;
   lastSyncAt: Date | null;
+  isDrafted: boolean;
+  tierId: string | null;
+  aliases: string[];
   depthChartPosition: string | null;
   depthChartOrder: number | null;
-  tierId: string | null;
-  tier?: Tier | null;
-  playerTags: PlayerTag[];
-  notes: Note[];
+  importSessionId: string | null;
   createdAt: Date;
   updatedAt: Date;
-  importSessionId?: string | null;
+  // Optional relations - properly typed as optional
+  tier?: Tier | null;
+  playerTags?: PlayerTag[] | null;
+  notes?: Note[] | null;
 }
 
 export interface Tier {
@@ -67,16 +48,12 @@ export interface Tier {
   name: string;
   color: string;
   order: number;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface Tag {
   id: string;
   name: string;
   color: string;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface PlayerTag {
@@ -84,34 +61,22 @@ export interface PlayerTag {
   playerId: string;
   tagId: string;
   tag: Tag;
-  createdAt: Date;
 }
 
 export interface Note {
   id: string;
-  playerId: string;
   content: string;
   color: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ImportResult {
-  matched: number;
-  created: number;
-  updated: number;
-  skipped: number;
-  conflicts: Array<{
-    excelData: Record<string, any>;
-    potentialMatches: Player[];
-  }>;
+  playerId: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ImportOptions {
-  updateStrategy?: 'merge' | 'overwrite';
-  autoMatchThreshold?: number;
-  createNewPlayers?: boolean;
-  preserveSleeperData?: boolean;
+  updateStrategy: 'merge' | 'overwrite';
+  autoMatchThreshold: number;
+  createNewPlayers: boolean;
+  preserveSleeperData: boolean;
 }
 
 export interface ColumnMapping {
@@ -160,7 +125,7 @@ export interface ImportSession {
 
 // Main API object
 export const playerApi = {
-  // Basic CRUD operations
+  // Basic CRUD operations - FIXED: Added limit parameter support
   getPlayers: (filters?: {
     scoring?: 'PPR' | 'Standard';
     includeDrafted?: boolean;
@@ -169,8 +134,15 @@ export const playerApi = {
     team?: string;
     hasSleeperId?: boolean;
     search?: string;
+    limit?: number;
+    offset?: number;
   }) => {
-    return api.get('/players', { params: filters });
+    // Set default limit to 2000 to get all players
+    const params = {
+      limit: 2000,
+      ...filters
+    };
+    return api.get('/players', { params });
   },
 
   getPlayer: (id: string) => {

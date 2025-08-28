@@ -27,7 +27,7 @@ export interface SleeperPlayer {
   search_full_name: string;
   fantasy_positions: string[];
   number?: number;
-  depth_chart_position?: string; // Changed from number to string
+  depth_chart_position?: string;
   depth_chart_order?: number;
   status: string;
   search_rank?: number;
@@ -59,7 +59,6 @@ export interface SleeperProjections {
     rec?: number;
     rec_yd?: number;
     rec_td?: number;
-    // Many more stats available
   };
 }
 
@@ -76,8 +75,6 @@ export interface ConvertedPlayerData {
   projectedPoints: number | null;
   byeWeek: number | null;
   aliases: string[];
-  userNotes: string[];
-  customTags: string[];
   tierId: string | null;
   isDrafted: boolean;
   customRank: number | null;
@@ -85,7 +82,7 @@ export interface ConvertedPlayerData {
   dataSource: string;
   lastSyncAt: Date;
   rank?: number;
-  depthChartPosition?: string; // Changed from number to string
+  depthChartPosition?: string;
   depthChartOrder?: number;
 }
 
@@ -125,7 +122,6 @@ class SleeperAPIService {
 
   /**
    * Get all NFL players from Sleeper
-   * Note: This is a large dataset (~3000+ players), use sparingly
    */
   async getAllPlayers(): Promise<{ [playerId: string]: SleeperPlayer }> {
     await this.rateLimit();
@@ -176,13 +172,13 @@ class SleeperAPIService {
   }
 
   /**
-   * Get weekly stats for a specific week/season  
+   * Get weekly stats for players
    */
-  async getWeeklyStats(season: string = '2024', week: number): Promise<any> {
+  async getWeeklyStats(season: string, week: number): Promise<any> {
     await this.rateLimit();
     
     try {
-      const response = await this.axiosInstance.get(`/stats/nfl/${season}/${week}`);
+      const response = await this.axiosInstance.get(`/stats/nfl/regular/${season}/${week}`);
       return response.data;
     } catch (error: any) {
       console.error('Error fetching weekly stats:', error.message);
@@ -191,13 +187,13 @@ class SleeperAPIService {
   }
 
   /**
-   * Get season stats
+   * Get season stats for players
    */
-  async getSeasonStats(season: string = '2024'): Promise<any> {
+  async getSeasonStats(season: string): Promise<any> {
     await this.rateLimit();
     
     try {
-      const response = await this.axiosInstance.get(`/stats/nfl/${season}`);
+      const response = await this.axiosInstance.get(`/stats/nfl/regular/${season}`);
       return response.data;
     } catch (error: any) {
       console.error('Error fetching season stats:', error.message);
@@ -206,9 +202,9 @@ class SleeperAPIService {
   }
 
   /**
-   * Get NFL state (current week, season, etc.)
+   * Get current NFL state (week, season, etc.)
    */
-  async getNFLState() {
+  async getNFLState(): Promise<any> {
     await this.rateLimit();
     
     try {
@@ -221,9 +217,9 @@ class SleeperAPIService {
   }
 
   /**
-   * Convert Sleeper player data to our Player model format
+   * Convert Sleeper player data to our database format
    */
-  convertToPlayerFormat(sleeperPlayer: SleeperPlayer, projections?: any): ConvertedPlayerData {
+  private convertToPlayerFormat(sleeperPlayer: SleeperPlayer, projections?: any): ConvertedPlayerData {
     const fullName = sleeperPlayer.full_name || 
                      `${sleeperPlayer.first_name} ${sleeperPlayer.last_name}`.trim();
     
@@ -253,9 +249,7 @@ class SleeperAPIService {
         `${sleeperPlayer.first_name} ${sleeperPlayer.last_name}`,
         ...(sleeperPlayer.full_name ? [sleeperPlayer.full_name] : [])
       ].filter((alias): alias is string => Boolean(alias)),
-      // Preserve existing user data
-      userNotes: [],
-      customTags: [],
+      // Fields that match Prisma schema
       tierId: null,
       isDrafted: false,
       customRank: null,
@@ -275,8 +269,8 @@ class SleeperAPIService {
       includeProjections = true, 
       season = '2024', 
       onlyActive = true,
-      positionsFilter = ['QB', 'WR', 'RB', 'TE', 'K'], // Default fantasy positions
-      topPlayersLimit = 500 // Default to top 500 players
+      positionsFilter = ['QB', 'WR', 'RB', 'TE', 'K'],
+      topPlayersLimit = 500
     } = options;
 
     try {
@@ -322,7 +316,7 @@ class SleeperAPIService {
             // Use multiple ranking criteria for better sorting
             projectionScore: projections[playerId]?.pts_ppr || 0,
             sleeperRank: sleeperPlayer.search_rank || 9999, // Lower is better
-            hasProjections: !!projections[playerId]
+            hasProjections: !projections[playerId]
           };
         })
         // Sort by projections first (if available), then by Sleeper's ranking
@@ -354,15 +348,23 @@ class SleeperAPIService {
         
         for (const playerData of batch) {
           try {
-            // Check if player already exists (by name and position)
-            const existingPlayer = await prisma.player.findUnique({
+            // FIXED: Check if player already exists using findFirst instead of findUnique
+            // First try to find by sleeperId (most reliable)
+            let existingPlayer = await prisma.player.findFirst({
               where: {
-                name_position: {
+                sleeperId: playerData.sleeperId
+              }
+            });
+
+            // If not found by sleeperId, try by name and position
+            if (!existingPlayer) {
+              existingPlayer = await prisma.player.findFirst({
+                where: {
                   name: playerData.name,
                   position: playerData.position
                 }
-              }
-            });
+              });
+            }
 
             if (existingPlayer) {
               // Update existing player but preserve user data
@@ -384,9 +386,25 @@ class SleeperAPIService {
               });
               updatedCount++;
             } else {
-              // Create new player
+              // Create new player - only include fields that exist in schema
               await prisma.player.create({
-                data: playerData
+                data: {
+                  name: playerData.name,
+                  position: playerData.position,
+                  team: playerData.team,
+                  projectedPoints: playerData.projectedPoints,
+                  byeWeek: playerData.byeWeek,
+                  rank: playerData.rank,
+                  customRank: playerData.customRank,
+                  aliases: playerData.aliases,
+                  sleeperId: playerData.sleeperId,
+                  dataSource: playerData.dataSource,
+                  lastSyncAt: playerData.lastSyncAt,
+                  isDrafted: playerData.isDrafted,
+                  tierId: playerData.tierId,
+                  depthChartPosition: playerData.depthChartPosition,
+                  depthChartOrder: playerData.depthChartOrder
+                }
               });
               newCount++;
             }
