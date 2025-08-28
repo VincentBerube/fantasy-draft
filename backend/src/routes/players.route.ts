@@ -1122,14 +1122,30 @@ router.get('/search', async (req: Request, res: Response) => {
   }
 });
 
-// Get player statistics
+// Get player statistics - implement directly
 router.get('/stats', async (req: Request, res: Response) => {
   try {
-    const stats = await playerService.getPlayerStats();
-    res.json({
-      success: true,
-      data: stats
+    const totalPlayers = await prisma.player.count();
+    const draftedPlayers = await prisma.player.count({ where: { isDrafted: true } });
+    const undraftedPlayers = totalPlayers - draftedPlayers;
+
+    const byPosition = await prisma.player.groupBy({
+      by: ['position'],
+      _count: { id: true },
+      orderBy: { _count: { id: 'desc' } }
     });
+
+    const stats = {
+      totalPlayers,
+      draftedPlayers,
+      undraftedPlayers,
+      byPosition: byPosition.map(pos => ({
+        position: pos.position,
+        count: pos._count.id
+      }))
+    };
+
+    res.json({ success: true, data: stats });
   } catch (error: any) {
     console.error('Failed to get player stats:', error);
     res.status(500).json({

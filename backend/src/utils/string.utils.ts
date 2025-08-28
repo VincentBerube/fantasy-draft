@@ -69,8 +69,8 @@ export function extractPlayerName(rawName: string): string {
 /**
  * Normalize team abbreviations
  */
-export function normalizeTeam(team: string): string | null {
-  if (!team) return null;
+export function normalizeTeam(team: string): string | undefined {
+  if (!team) return undefined;
   
   const teamMap: Record<string, string> = {
     'JAX': 'JAC',

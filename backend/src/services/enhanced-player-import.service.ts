@@ -101,10 +101,10 @@ export class EnhancedPlayerImportService {
         needsReview: [],
         newPlayers: [],
         errors: [],
-        columnMapping: parsedData.columnMappings.map(mapping => ({
-          excelColumn: mapping.excelColumn,
-          mappedTo: mapping.playerField,
-          processed: mapping.playerField !== null
+        columnMapping: parsedData.columns.map(col => ({
+          excelColumn: col.header,
+          mappedTo: col.mappedField,
+          processed: col.mappedField !== null
         }))
       };
 
@@ -181,7 +181,7 @@ export class EnhancedPlayerImportService {
               const newPlayerId = await this.playerMatcher.createPlayerFromExcel({
                 name: excelPlayer.name,
                 position: excelPlayer.position,
-                team: excelPlayer.team,
+                team: excelPlayer.team || undefined,
                 additionalData: excelPlayer.additionalData,
                 rowIndex: excelPlayer.rowIndex
               });
@@ -277,9 +277,7 @@ export class EnhancedPlayerImportService {
 
       // Parse Excel file
       const parsedData = await this.excelParser.parseExcelFile(filePath);
-      const sampleData = await this.excelParser.getSampleData(filePath, 10);
-      const columnAnalysis = await this.excelParser.analyzeColumns(filePath);
-
+      
       // Get sample of players for preview
       const samplePlayers = parsedData.players.slice(0, 10);
       const playerSamples = [];
@@ -287,35 +285,61 @@ export class EnhancedPlayerImportService {
       for (const excelPlayer of samplePlayers) {
         const matchResult = await this.playerMatcher.findPlayerMatch(excelPlayer);
         
+        // Find the best match for display
+        let potentialMatch: {
+          playerName: string;
+          confidence: number;
+          isSleeperPlayer: boolean;
+        } | undefined;
+
+        if (matchResult.exactMatch) {
+          const exactPlayer = await this.prisma.player.findUnique({
+            where: { id: matchResult.exactMatch },
+            select: { name: true, sleeperId: true }
+          });
+          
+          potentialMatch = {
+            playerName: exactPlayer?.name || 'Exact match found',
+            confidence: 1.0,
+            isSleeperPlayer: !!exactPlayer?.sleeperId
+          };
+        } else if (matchResult.potentialMatches.length > 0) {
+          const bestMatch = matchResult.potentialMatches[0];
+          const matchedPlayer = await this.prisma.player.findUnique({
+            where: { id: bestMatch.playerId },
+            select: { name: true, sleeperId: true }
+          });
+          
+          potentialMatch = {
+            playerName: matchedPlayer?.name || bestMatch.playerName,
+            confidence: bestMatch.confidence,
+            isSleeperPlayer: !!matchedPlayer?.sleeperId
+          };
+        }
+        
         playerSamples.push({
           name: excelPlayer.name,
           position: excelPlayer.position,
           confidence: matchResult.exactMatch ? 1.0 : 
             matchResult.potentialMatches.length > 0 ? matchResult.potentialMatches[0].confidence : 0,
-          potentialMatch: matchResult.exactMatch ? {
-            name: 'Exact match found',
-            confidence: 1.0
-          } : matchResult.potentialMatches[0] ? {
-            name: matchResult.potentialMatches[0].playerName,
-            confidence: matchResult.potentialMatches[0].confidence
-          } : undefined,
+          potentialMatch,
           additionalFields: excelPlayer.additionalData
         });
       }
 
       // Generate warnings
       const warnings: string[] = [];
-      if (columnAnalysis.columns.filter(c => c.mappedField === 'name').length === 0) {
+      if (parsedData.columns.filter(c => c.mappedField === 'name').length === 0) {
         warnings.push('No player name column detected');
       }
       
-      const recognizedColumns = columnAnalysis.columns.filter(c => c.mappedField !== null).length;
+      const recognizedColumns = parsedData.columns.filter(c => c.mappedField !== null).length;
       if (recognizedColumns < 3) {
         warnings.push('Very few columns recognized automatically - consider manual mapping');
       }
 
       return {
-        columnAnalysis: columnAnalysis.columns.map(col => ({
+        columnAnalysis: parsedData.columns.map(col => ({
           header: col.header,
           mappedTo: col.mappedField,
           dataType: col.dataType,
@@ -324,10 +348,10 @@ export class EnhancedPlayerImportService {
         })),
         playerSamples,
         summary: {
-          totalRows: sampleData.metadata.totalRows,
+          totalRows: parsedData.metadata.totalRows,
           validPlayers: parsedData.players.length,
           recognizedColumns,
-          unknownColumns: columnAnalysis.columns.length - recognizedColumns,
+          unknownColumns: parsedData.columns.length - recognizedColumns,
           estimatedAutoMatches: Math.floor(parsedData.players.length * 0.8),
           estimatedNewPlayers: Math.floor(parsedData.players.length * 0.2)
         },

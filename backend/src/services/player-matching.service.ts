@@ -4,8 +4,8 @@ import { normalizePlayerName, calculateStringSimilarity } from '../utils/string.
 
 export interface ExcelPlayerData {
   name: string;
-  position?: string;
-  team?: string;
+  position?: string | undefined;
+  team?: string | undefined;
   additionalData: Record<string, any>;
   rowIndex: number;
 }
@@ -172,7 +172,7 @@ export class PlayerMatchingService {
       data: {
         name: normalizePlayerName(name),
         position: position?.toUpperCase() || 'UNKNOWN',
-        team: team?.toUpperCase(),
+        team: team?.toUpperCase() || null,
         dataSource: 'excel',
         sleeperId: null,
         // Map additional data to player fields with proper validation

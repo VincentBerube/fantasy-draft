@@ -108,7 +108,7 @@ export class AdvancedImportService {
             excelRowIndex: playerData.rowIndex,
             name: playerData.name,
             position: playerData.position,
-            team: playerData.team,
+            team: playerData.team || undefined,
             matchType: 'exact',
             matchedPlayer: existingPlayer ? {
               id: existingPlayer.id,
@@ -135,7 +135,7 @@ export class AdvancedImportService {
             excelRowIndex: playerData.rowIndex,
             name: playerData.name,
             position: playerData.position,
-            team: playerData.team,
+            team: playerData.team || undefined,
             matchType: 'fuzzy',
             matchedPlayer: existingPlayer ? {
               id: existingPlayer.id,
@@ -152,7 +152,7 @@ export class AdvancedImportService {
             excelRowIndex: playerData.rowIndex,
             name: playerData.name,
             position: playerData.position,
-            team: playerData.team,
+            team: playerData.team || undefined,
             matchType: 'new',
             newData: playerData.additionalData,
             willImport: false, // Require user confirmation for new players
