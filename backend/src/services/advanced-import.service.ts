@@ -3,14 +3,13 @@ import { PrismaClient } from '@prisma/client';
 import { DynamicExcelParserService } from './dynamic-excel-parser.service';
 import { PlayerMatchingService } from './player-matching.service';
 import * as fs from 'fs';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface AdvancedColumnMapping {
   excelColumn: string;
-  mappedTo: string | null;
-  dataType: string;
-  sampleValue: any;
+  playerField: string | null;
   willImport: boolean;
-  customMapping?: string;
+  dataType: 'string' | 'number' | 'float' | 'boolean' | 'date';
 }
 
 export interface AdvancedPlayerPreview {
@@ -89,15 +88,8 @@ export class AdvancedImportService {
       for (let i = 0; i < mappedPlayers.length; i++) {
         const playerData = mappedPlayers[i];
         
-        // Find potential matches - use the correct method name
-        const matches = await this.playerMatcher.findPlayerMatch(
-          {
-            name: playerData.name,
-            position: playerData.position,
-            team: playerData.team,
-            additionalData: playerData.additionalData
-          }
-        );
+        // Find potential matches
+        const matches = await this.playerMatcher.findPlayerMatch(playerData);
 
         let preview: AdvancedPlayerPreview;
 
@@ -124,14 +116,14 @@ export class AdvancedImportService {
               currentData: this.extractPlayerData(existingPlayer)
             } : undefined,
             newData: playerData.additionalData,
-            willImport: true,
+            willImport: true, // Auto-select exact matches
             conflicts: existingPlayer ? this.detectConflicts(existingPlayer, playerData.additionalData) : []
           };
         } else if (matches.potentialMatches.length > 0) {
-          // Fuzzy matches available
-          const topMatch = matches.potentialMatches[0];
+          // Fuzzy matches found
+          const bestMatch = matches.potentialMatches[0];
           const existingPlayer = await this.prisma.player.findUnique({
-            where: { id: topMatch.playerId },
+            where: { id: bestMatch.playerId },
             include: {
               tier: true,
               playerTags: { include: { tag: true } },
@@ -211,58 +203,46 @@ export class AdvancedImportService {
         try {
           if (playerSelection.matchedPlayer) {
             // Update existing player
-            const oldData = playerSelection.matchedPlayer.currentData;
-            const newData = this.mergePlayerData(oldData, playerSelection.newData, importData.settings);
-            
-            const updatedPlayer = await this.prisma.player.update({
-              where: { id: playerSelection.matchedPlayer.id },
-              data: {
-                ...newData,
-                importSessionId: sessionId
-              },
-              include: {
-                tier: true,
-                playerTags: { include: { tag: true } },
-                notes: true
+            const oldData = this.extractPlayerData(playerSelection.matchedPlayer);
+            const fieldsChanged = await this.playerMatcher.updatePlayerWithExcelData(
+              playerSelection.matchedPlayer.id,
+              playerSelection.newData,
+              {
+                updateStrategy: importData.settings.updateStrategy,
+                preserveSleeperData: importData.settings.preserveSleeperData
               }
-            });
+            );
 
-            const fieldsChanged = this.getChangedFields(oldData, newData);
-            session.changes.push({
-              playerId: updatedPlayer.id,
-              playerName: updatedPlayer.name,
-              action: 'update',
-              oldData,
-              newData,
-              fieldsChanged
-            });
+            if (fieldsChanged.length > 0) {
+              session.changes.push({
+                playerId: playerSelection.matchedPlayer.id,
+                playerName: playerSelection.name,
+                action: 'update',
+                oldData,
+                newData: playerSelection.newData,
+                fieldsChanged
+              });
 
-            session.summary.playersModified++;
-            session.summary.fieldsChanged += fieldsChanged.length;
-
+              session.summary.playersModified++;
+              session.summary.fieldsChanged += fieldsChanged.length;
+            }
           } else {
             // Create new player
-            const newPlayer = await this.prisma.player.create({
-              data: {
-                name: playerSelection.name,
-                position: playerSelection.position || 'UNKNOWN',
-                team: playerSelection.team,
-                ...playerSelection.newData,
-                dataSource: 'excel',
-                isDrafted: false,
-                aliases: [],
-                importSessionId: sessionId
-              },
-              include: {
-                tier: true,
-                playerTags: { include: { tag: true } },
-                notes: true
-              }
+            const newPlayerId = await this.playerMatcher.createPlayerFromExcel({
+              name: playerSelection.name,
+              position: playerSelection.position,
+              team: playerSelection.team,
+              additionalData: playerSelection.newData,
+              rowIndex: playerSelection.excelRowIndex
+            });
+
+            const newPlayer = await this.prisma.player.findUnique({
+              where: { id: newPlayerId }
             });
 
             session.changes.push({
-              playerId: newPlayer.id,
-              playerName: newPlayer.name,
+              playerId: newPlayerId,
+              playerName: newPlayer?.name || playerSelection.name,
               action: 'create',
               newData: playerSelection.newData,
               fieldsChanged: Object.keys(playerSelection.newData)
@@ -375,10 +355,26 @@ export class AdvancedImportService {
   }
 
   // Private helper methods
-  private applyColumnMappings(parsedData: any, columnMappings: AdvancedColumnMapping[]) {
+  private applyColumnMappings(parsedData: any, columnMappings: AdvancedColumnMapping[]): any[] {
     // Apply user-defined column mappings to parsed data
-    // This would transform the raw Excel data based on the mappings
-    return parsedData.players; // Simplified for now
+    return parsedData.players.map((player: any) => {
+      const mappedData: any = {
+        ...player,
+        additionalData: {}
+      };
+
+      // Apply column mappings
+      for (const mapping of columnMappings) {
+        if (mapping.willImport && mapping.playerField) {
+          const value = player.additionalData[mapping.excelColumn];
+          if (value !== undefined && value !== null) {
+            mappedData.additionalData[mapping.playerField] = value;
+          }
+        }
+      }
+
+      return mappedData;
+    });
   }
 
   private extractPlayerData(player: any): Record<string, any> {
@@ -392,57 +388,31 @@ export class AdvancedImportService {
       vorp: player.vorp,
       adp: player.adp,
       byeWeek: player.byeWeek,
-      isDrafted: player.isDrafted
+      lastSeasonPoints: player.lastSeasonPoints,
+      positionalRank: player.positionalRank,
+      isDrafted: player.isDrafted,
+      dataSource: player.dataSource,
+      sleeperId: player.sleeperId
     };
   }
 
   private detectConflicts(existingPlayer: any, newData: Record<string, any>): string[] {
     const conflicts: string[] = [];
-    
-    // Check for conflicting data
-    Object.keys(newData).forEach(field => {
-      if (existingPlayer[field] !== undefined && 
-          existingPlayer[field] !== null && 
-          existingPlayer[field] !== newData[field]) {
-        conflicts.push(`${field}: ${existingPlayer[field]} → ${newData[field]}`);
+    const fieldsToCheck = ['position', 'team', 'rank', 'projectedPoints', 'adp'];
+
+    for (const field of fieldsToCheck) {
+      const existing = existingPlayer[field];
+      const newValue = newData[field];
+
+      if (existing != null && newValue != null && existing !== newValue) {
+        conflicts.push(`${field}: ${existing} → ${newValue}`);
       }
-    });
+    }
 
     return conflicts;
   }
 
-  private mergePlayerData(
-    oldData: Record<string, any>, 
-    newData: Record<string, any>, 
-    settings: any
-  ): Record<string, any> {
-    if (settings.updateStrategy === 'overwrite') {
-      return { ...oldData, ...newData };
-    } else {
-      // Merge strategy - only update non-null new values
-      const merged = { ...oldData };
-      Object.keys(newData).forEach(key => {
-        if (newData[key] !== null && newData[key] !== undefined) {
-          merged[key] = newData[key];
-        }
-      });
-      return merged;
-    }
-  }
-
-  private getChangedFields(oldData: Record<string, any>, newData: Record<string, any>): string[] {
-    const changed: string[] = [];
-    
-    Object.keys(newData).forEach(field => {
-      if (oldData[field] !== newData[field]) {
-        changed.push(field);
-      }
-    });
-
-    return changed;
-  }
-
   private generateSessionId(): string {
-    return `import_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return uuidv4();
   }
 }

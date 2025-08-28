@@ -1,6 +1,6 @@
 // backend/src/services/dynamic-excel-parser.service.ts
 import * as XLSX from 'xlsx';
-import { normalizePlayerName, normalizePosition, normalizeTeam } from '../utils/string-utils';
+import { normalizePlayerName, normalizePosition, normalizeTeam } from '../utils/string.utils';
 
 export interface DynamicExcelColumn {
   index: number;

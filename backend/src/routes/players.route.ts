@@ -44,34 +44,35 @@ interface MulterRequest extends Request {
 // BASIC PLAYER OPERATIONS
 // =============================================================================
 
-// Get all players with filtering - FIXED: Increased default limit to 1000
+// Get all players with filtering and optional stats
 router.get('/', async (req: Request, res: Response) => {
   try {
     const {
       position,
       team,
-      isDrafted,
+      includeDrafted = 'true',
       dataSource,
-      search,
-      limit = '1000', // FIXED: Increased from 100 to 1000
-      offset = '0'
+      hasSleeperId,
+      limit,
+      offset = '0',
+      sortBy = 'rank',
+      sortOrder = 'asc'
     } = req.query;
 
-    const where: any = {};
-    
-    if (position) where.position = position;
-    if (team) where.team = team;
-    if (isDrafted !== undefined) where.isDrafted = isDrafted === 'true';
-    if (dataSource) where.dataSource = dataSource;
-    if (search) {
-      where.name = {
-        contains: search as string,
-        mode: 'insensitive'
-      };
-    }
+    const filters: any = {
+      ...(position && { position: position as string }),
+      ...(team && { team: team as string }),
+      ...(includeDrafted === 'false' && { isDrafted: false }),
+      ...(dataSource && { dataSource: dataSource as string }),
+      ...(hasSleeperId === 'true' && { sleeperId: { not: null } }),
+      ...(hasSleeperId === 'false' && { sleeperId: null })
+    };
+
+    const orderBy: any = {};
+    orderBy[sortBy as string] = sortOrder;
 
     const players = await prisma.player.findMany({
-      where,
+      where: filters,
       include: {
         tier: true,
         playerTags: {
@@ -81,12 +82,8 @@ router.get('/', async (req: Request, res: Response) => {
         },
         notes: true
       },
-      orderBy: [
-        { customRank: 'asc' }, // FIXED: Use customRank first, then rank
-        { rank: 'asc' },
-        { name: 'asc' }
-      ],
-      take: parseInt(limit as string),
+      orderBy,
+      ...(limit && { take: parseInt(limit as string) }),
       skip: parseInt(offset as string)
     });
 
@@ -118,9 +115,7 @@ router.get('/:id', async (req: Request, res: Response) => {
             tag: true
           }
         },
-        notes: {
-          orderBy: { createdAt: 'desc' }
-        }
+        notes: true
       }
     });
 
@@ -145,15 +140,111 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Create new player
+router.post('/', async (req: Request, res: Response) => {
+  try {
+    const { name, position, team, tier, ...otherData } = req.body;
+
+    if (!name || !position) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name and position are required'
+      });
+    }
+
+    // Clean and validate numeric fields to prevent the ADP error
+    const cleanedData: any = {
+      name,
+      position: position.toUpperCase(),
+      team: team?.toUpperCase(),
+      dataSource: 'manual',
+      isDrafted: false
+    };
+
+    // Only add numeric fields if they're valid numbers
+    if (otherData.rank && !isNaN(Number(otherData.rank))) {
+      cleanedData.rank = Number(otherData.rank);
+    }
+    if (otherData.customRank && !isNaN(Number(otherData.customRank))) {
+      cleanedData.customRank = Number(otherData.customRank);
+    }
+    if (otherData.projectedPoints && !isNaN(Number(otherData.projectedPoints))) {
+      cleanedData.projectedPoints = Number(otherData.projectedPoints);
+    }
+    if (otherData.vorp && !isNaN(Number(otherData.vorp))) {
+      cleanedData.vorp = Number(otherData.vorp);
+    }
+    if (otherData.adp && !isNaN(Number(otherData.adp))) {
+      cleanedData.adp = Number(otherData.adp);
+    }
+    if (otherData.byeWeek && !isNaN(Number(otherData.byeWeek))) {
+      cleanedData.byeWeek = Number(otherData.byeWeek);
+    }
+    if (otherData.lastSeasonPoints && !isNaN(Number(otherData.lastSeasonPoints))) {
+      cleanedData.lastSeasonPoints = Number(otherData.lastSeasonPoints);
+    }
+
+    // Handle tier assignment
+    if (tier) {
+      cleanedData.tierId = tier;
+    }
+
+    const player = await prisma.player.create({
+      data: cleanedData,
+      include: {
+        tier: true,
+        playerTags: {
+          include: {
+            tag: true
+          }
+        },
+        notes: true
+      }
+    });
+
+    res.json({
+      success: true,
+      data: player
+    });
+  } catch (error: any) {
+    console.error('Failed to create player:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create player',
+      details: error.message
+    });
+  }
+});
+
 // Update player
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const updateData = req.body;
 
+    // Clean numeric fields to prevent validation errors
+    const cleanedUpdateData: any = { ...updateData };
+    
+    // Convert string numbers to actual numbers, or set to null if invalid
+    const numericFields = ['rank', 'customRank', 'projectedPoints', 'vorp', 'adp', 'byeWeek', 'lastSeasonPoints'];
+    
+    for (const field of numericFields) {
+      if (field in cleanedUpdateData) {
+        const value = cleanedUpdateData[field];
+        if (value === '' || value === null || value === undefined) {
+          cleanedUpdateData[field] = null;
+        } else if (!isNaN(Number(value))) {
+          cleanedUpdateData[field] = Number(value);
+        } else {
+          // Invalid number, set to null
+          cleanedUpdateData[field] = null;
+        }
+      }
+    }
+
     const player = await prisma.player.update({
       where: { id },
-      data: updateData,
+      data: cleanedUpdateData,
       include: {
         tier: true,
         playerTags: {
@@ -202,93 +293,297 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// =============================================================================
-// STATISTICS AND ANALYTICS - FIXED VERSION
-// =============================================================================
-
-// Get player statistics
-router.get('/stats', async (req: Request, res: Response) => {
+// Export players
+router.get('/export', async (req: Request, res: Response) => {
   try {
-    const [totalPlayers, draftedPlayers, positionStats] = await Promise.all([
-      prisma.player.count(),
-      prisma.player.count({ where: { isDrafted: true } }),
-      prisma.player.groupBy({
-        by: ['position'],
-        _count: {
-          id: true
-        },
-        _avg: {
-          projectedPoints: true,
-          rank: true
-        },
-        orderBy: {
-          _count: {
-            id: 'desc'
-          }
-        }
-      })
-    ]);
-
-    res.json({
-      success: true,
-      data: {
-        totalPlayers,
-        draftedPlayers,
-        undraftedPlayers: totalPlayers - draftedPlayers,
-        byPosition: positionStats.map(stat => ({
-          position: stat.position,
-          count: stat._count.id,
-          avgProjectedPoints: stat._avg.projectedPoints,
-          avgRank: stat._avg.rank
-        }))
-      }
-    });
+    const { format = 'excel' } = req.query;
+    const workbook = await playerService.exportPlayers();
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="fantasy-players.xlsx"');
+    
+    await workbook.xlsx.write(res);
+    res.end();
   } catch (error: any) {
-    console.error('Failed to get player stats:', error);
+    console.error('Failed to export players:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get player stats',
+      error: 'Failed to export players',
       details: error.message
     });
   }
 });
 
-// Get position-specific statistics
-router.get('/stats/position/:position', async (req: Request, res: Response) => {
-  try {
-    const { position } = req.params;
-    
-    const stats = await prisma.player.aggregate({
-      where: { position },
-      _count: {
-        id: true
-      },
-      _avg: {
-        projectedPoints: true,
-        rank: true,
-        vorp: true,
-        adp: true
-      },
-      _min: {
-        rank: true
-      },
-      _max: {
-        rank: true
-      }
+// =============================================================================
+// IMPORT FUNCTIONALITY
+// =============================================================================
+
+// Enhanced import preview (Simple mode)
+router.post('/import/preview', upload.single('file'), async (req: MulterRequest, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'No file uploaded' 
     });
+  }
+
+  try {
+    const importService = new EnhancedPlayerImportService(prisma);
+    const preview = await importService.getImportPreview(req.file.path);
 
     res.json({
       success: true,
-      data: {
-        position,
-        ...stats
-      }
+      preview
     });
   } catch (error: any) {
-    console.error('Failed to get position stats:', error);
+    console.error('Preview failed:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get position stats',
+      error: 'Preview generation failed',
+      details: error.message
+    });
+  } finally {
+    // Cleanup uploaded file
+    try {
+      if (req.file?.path) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (cleanupError) {
+      console.warn('Failed to cleanup preview file:', cleanupError);
+    }
+  }
+});
+
+// Execute enhanced import (Simple mode)
+router.post('/import/enhanced-execute', upload.single('file'), async (req: MulterRequest, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'No file uploaded' 
+    });
+  }
+
+  try {
+    const options = req.body?.options ? JSON.parse(req.body.options) : {};
+    
+    const importService = new EnhancedPlayerImportService(prisma);
+    const result = await importService.importFromExcel(req.file.path, options);
+
+    res.json({
+      success: true,
+      result
+    });
+  } catch (error: any) {
+    console.error('Enhanced import failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Import failed',
+      details: error.message
+    });
+  } finally {
+    try {
+      if (req.file?.path) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (cleanupError) {
+      console.warn('Failed to cleanup import file:', cleanupError);
+    }
+  }
+});
+
+// Advanced import preview (Advanced mode)
+router.post('/import/advanced-preview', upload.single('file'), async (req: MulterRequest, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'No file uploaded' 
+    });
+  }
+
+  try {
+    const columnMappings = req.body?.columnMappings ? JSON.parse(req.body.columnMappings) : [];
+    const settings = req.body?.settings ? JSON.parse(req.body.settings) : {};
+
+    const advancedImportService = new AdvancedImportService(prisma);
+    const playerPreviews = await advancedImportService.generateAdvancedPreview(
+      req.file.path, 
+      columnMappings, 
+      settings
+    );
+
+    res.json({
+      success: true,
+      playerPreviews
+    });
+  } catch (error: any) {
+    console.error('Advanced preview failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Preview generation failed',
+      details: error.message
+    });
+  } finally {
+    try {
+      if (req.file?.path) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (cleanupError) {
+      console.warn('Failed to cleanup preview file:', cleanupError);
+    }
+  }
+});
+
+// Execute advanced import (Advanced mode)
+router.post('/import/advanced-execute', upload.single('file'), async (req: MulterRequest, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'No file uploaded' 
+    });
+  }
+
+  try {
+    const importData = req.body?.importData ? JSON.parse(req.body.importData) : null;
+    
+    if (!importData) {
+      return res.status(400).json({
+        success: false,
+        error: 'Import data is required'
+      });
+    }
+    
+    const advancedImportService = new AdvancedImportService(prisma);
+    const session = await advancedImportService.executeControlledImport(importData);
+
+    res.json({
+      success: true,
+      session
+    });
+  } catch (error: any) {
+    console.error('Advanced import failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Import failed',
+      details: error.message
+    });
+  } finally {
+    try {
+      if (req.file?.path) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (cleanupError) {
+      console.warn('Failed to cleanup import file:', cleanupError);
+    }
+  }
+});
+
+// Manual match resolution
+router.post('/resolve-manual-match', async (req: Request, res: Response) => {
+  try {
+    const { excelRowIndex, selectedPlayerId, excelData, options } = req.body;
+    
+    if (!selectedPlayerId || !excelData) {
+      return res.status(400).json({
+        success: false,
+        error: 'Selected player ID and Excel data are required'
+      });
+    }
+
+    const importService = new EnhancedPlayerImportService(prisma);
+    await importService.resolveManualMatch({
+      excelRowIndex,
+      selectedPlayerId,
+      excelData,
+      options
+    });
+    
+    res.json({
+      success: true,
+      message: 'Match resolved successfully'
+    });
+  } catch (error: any) {
+    console.error('Failed to resolve match:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to resolve match',
+      details: error.message
+    });
+  }
+});
+
+// Import conflict resolution (alternative endpoint)
+router.post('/import/resolve', async (req: Request, res: Response) => {
+  try {
+    const { excelRowIndex, selectedPlayerId, excelData, options } = req.body;
+    
+    if (!selectedPlayerId || !excelData) {
+      return res.status(400).json({
+        success: false,
+        error: 'Selected player ID and Excel data are required'
+      });
+    }
+
+    const importService = new EnhancedPlayerImportService(prisma);
+    await importService.resolveManualMatch({
+      excelRowIndex,
+      selectedPlayerId,
+      excelData,
+      options
+    });
+    
+    res.json({
+      success: true,
+      message: 'Conflict resolved successfully'
+    });
+  } catch (error: any) {
+    console.error('Failed to resolve conflict:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to resolve conflict',
+      details: error.message
+    });
+  }
+});
+
+// Rollback import
+router.post('/import/rollback/:sessionId', async (req: Request, res: Response) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const advancedImportService = new AdvancedImportService(prisma);
+    await advancedImportService.rollbackImport(sessionId);
+
+    res.json({
+      success: true,
+      message: 'Import rolled back successfully'
+    });
+  } catch (error: any) {
+    console.error('Rollback failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Rollback failed',
+      details: error.message
+    });
+  }
+});
+
+// Get import history
+router.get('/import/history', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 10;
+    
+    const advancedImportService = new AdvancedImportService(prisma);
+    const history = await advancedImportService.getImportHistory(limit);
+
+    res.json({
+      success: true,
+      data: history
+    });
+  } catch (error: any) {
+    console.error('Failed to get import history:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get import history',
       details: error.message
     });
   }
@@ -392,98 +687,18 @@ router.post('/:id/undraft', async (req: Request, res: Response) => {
 });
 
 // =============================================================================
-// BULK OPERATIONS
+// TIER MANAGEMENT
 // =============================================================================
 
-// Bulk update players
-router.post('/bulk-update', async (req: Request, res: Response) => {
+// Assign player to tier
+router.post('/:id/tier', async (req: Request, res: Response) => {
   try {
-    const { playerIds, data } = req.body || {};
+    const { id } = req.params;
+    const { tierId } = req.body;
 
-    if (!playerIds || !Array.isArray(playerIds)) {
-      return res.status(400).json({
-        success: false,
-        error: 'playerIds array is required'
-      });
-    }
-
-    await prisma.player.updateMany({
-      where: {
-        id: {
-          in: playerIds
-        }
-      },
-      data
-    });
-
-    res.json({
-      success: true,
-      message: `${playerIds.length} players updated successfully`
-    });
-  } catch (error: any) {
-    console.error('Failed to bulk update players:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to bulk update players',
-      details: error.message
-    });
-  }
-});
-
-// Bulk delete players
-router.post('/bulk-delete', async (req: Request, res: Response) => {
-  try {
-    const { playerIds } = req.body || {};
-
-    if (!playerIds || !Array.isArray(playerIds)) {
-      return res.status(400).json({
-        success: false,
-        error: 'playerIds array is required'
-      });
-    }
-
-    await prisma.player.deleteMany({
-      where: {
-        id: {
-          in: playerIds
-        }
-      }
-    });
-
-    res.json({
-      success: true,
-      message: `${playerIds.length} players deleted successfully`
-    });
-  } catch (error: any) {
-    console.error('Failed to bulk delete players:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to bulk delete players',
-      details: error.message
-    });
-  }
-});
-
-// Search players
-router.get('/search', async (req: Request, res: Response) => {
-  try {
-    const { q: query, position, team, isDrafted, limit = '20' } = req.query;
-
-    const where: any = {};
-    
-    if (query) {
-      where.name = {
-        contains: query as string,
-        mode: 'insensitive'
-      };
-    }
-    
-    if (position) where.position = position;
-    if (team) where.team = team;
-    if (isDrafted !== undefined) where.isDrafted = isDrafted === 'true';
-
-    const players = await prisma.player.findMany({
-      where,
+    const player = await prisma.player.update({
+      where: { id },
+      data: { tierId },
       include: {
         tier: true,
         playerTags: {
@@ -492,44 +707,170 @@ router.get('/search', async (req: Request, res: Response) => {
           }
         },
         notes: true
-      },
-      orderBy: [
-        { customRank: 'asc' },
-        { rank: 'asc' },
-        { name: 'asc' }
-      ],
-      take: parseInt(limit as string)
+      }
     });
 
     res.json({
       success: true,
-      data: players
+      data: player
     });
   } catch (error: any) {
-    console.error('Failed to search players:', error);
+    console.error('Failed to assign tier:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to search players',
+      error: 'Failed to assign tier',
+      details: error.message
+    });
+  }
+});
+
+// Remove player from tier
+router.delete('/:id/tier', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const player = await prisma.player.update({
+      where: { id },
+      data: { tierId: null },
+      include: {
+        tier: true,
+        playerTags: {
+          include: {
+            tag: true
+          }
+        },
+        notes: true
+      }
+    });
+
+    res.json({
+      success: true,
+      data: player
+    });
+  } catch (error: any) {
+    console.error('Failed to remove tier:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove tier',
       details: error.message
     });
   }
 });
 
 // =============================================================================
-// PLAYER NOTES MANAGEMENT
+// TAG MANAGEMENT
+// =============================================================================
+
+// Add tag to player
+router.post('/:id/tags', async (req: Request, res: Response) => {
+  try {
+    const { id: playerId } = req.params;
+    const { tagId } = req.body;
+
+    if (!tagId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Tag ID is required'
+      });
+    }
+
+    await prisma.playerTag.create({
+      data: {
+        playerId,
+        tagId
+      }
+    });
+
+    // Return updated player
+    const player = await prisma.player.findUnique({
+      where: { id: playerId },
+      include: {
+        tier: true,
+        playerTags: {
+          include: {
+            tag: true
+          }
+        },
+        notes: true
+      }
+    });
+
+    res.json({
+      success: true,
+      data: player
+    });
+  } catch (error: any) {
+    console.error('Failed to add tag:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add tag',
+      details: error.message
+    });
+  }
+});
+
+// Remove tag from player
+router.delete('/:id/tags/:tagId', async (req: Request, res: Response) => {
+  try {
+    const { id: playerId, tagId } = req.params;
+
+    await prisma.playerTag.deleteMany({
+      where: {
+        playerId,
+        tagId
+      }
+    });
+
+    // Return updated player
+    const player = await prisma.player.findUnique({
+      where: { id: playerId },
+      include: {
+        tier: true,
+        playerTags: {
+          include: {
+            tag: true
+          }
+        },
+        notes: true
+      }
+    });
+
+    res.json({
+      success: true,
+      data: player
+    });
+  } catch (error: any) {
+    console.error('Failed to remove tag:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove tag',
+      details: error.message
+    });
+  }
+});
+
+// =============================================================================
+// NOTE MANAGEMENT
 // =============================================================================
 
 // Add note to player
 router.post('/:id/notes', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const { id: playerId } = req.params;
     const { content, color = '#6B7280' } = req.body;
+
+    if (!content) {
+      return res.status(400).json({
+        success: false,
+        error: 'Note content is required'
+      });
+    }
 
     const note = await prisma.note.create({
       data: {
         content,
         color,
-        playerId: id
+        playerId
       }
     });
 
@@ -547,15 +888,19 @@ router.post('/:id/notes', async (req: Request, res: Response) => {
   }
 });
 
-// Update player note
-router.put('/:playerId/notes/:noteId', async (req: Request, res: Response) => {
+// Update note
+router.put('/:id/notes/:noteId', async (req: Request, res: Response) => {
   try {
     const { noteId } = req.params;
     const { content, color } = req.body;
 
+    const updateData: any = {};
+    if (content !== undefined) updateData.content = content;
+    if (color !== undefined) updateData.color = color;
+
     const note = await prisma.note.update({
       where: { id: noteId },
-      data: { content, color }
+      data: updateData
     });
 
     res.json({
@@ -572,8 +917,8 @@ router.put('/:playerId/notes/:noteId', async (req: Request, res: Response) => {
   }
 });
 
-// Delete player note
-router.delete('/:playerId/notes/:noteId', async (req: Request, res: Response) => {
+// Delete note
+router.delete('/:id/notes/:noteId', async (req: Request, res: Response) => {
   try {
     const { noteId } = req.params;
 
@@ -596,75 +941,160 @@ router.delete('/:playerId/notes/:noteId', async (req: Request, res: Response) =>
 });
 
 // =============================================================================
-// PLAYER TAG MANAGEMENT
+// BULK OPERATIONS
 // =============================================================================
 
-// Add tag to player
-router.post('/:id/tags', async (req: Request, res: Response) => {
+// Bulk update players
+router.post('/bulk-update', async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    const { tagId } = req.body;
+    const { playerIds, data } = req.body;
 
-    const playerTag = await prisma.playerTag.create({
-      data: {
-        playerId: id,
-        tagId
-      },
-      include: {
-        tag: true
+    if (!playerIds || !Array.isArray(playerIds) || playerIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Player IDs array is required'
+      });
+    }
+
+    // Clean numeric fields in bulk data too
+    const cleanedData = { ...data };
+    const numericFields = ['rank', 'customRank', 'projectedPoints', 'vorp', 'adp', 'byeWeek', 'lastSeasonPoints'];
+    
+    for (const field of numericFields) {
+      if (field in cleanedData) {
+        const value = cleanedData[field];
+        if (value === '' || value === null || value === undefined) {
+          cleanedData[field] = null;
+        } else if (!isNaN(Number(value))) {
+          cleanedData[field] = Number(value);
+        } else {
+          cleanedData[field] = null;
+        }
       }
-    });
+    }
 
-    res.json({
-      success: true,
-      data: playerTag
-    });
-  } catch (error: any) {
-    console.error('Failed to add tag to player:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to add tag to player',
-      details: error.message
-    });
-  }
-});
-
-// Remove tag from player
-router.delete('/:playerId/tags/:tagId', async (req: Request, res: Response) => {
-  try {
-    const { playerId, tagId } = req.params;
-
-    await prisma.playerTag.deleteMany({
+    await prisma.player.updateMany({
       where: {
-        playerId,
-        tagId
+        id: {
+          in: playerIds
+        }
+      },
+      data: cleanedData
+    });
+
+    res.json({
+      success: true,
+      message: `Successfully updated ${playerIds.length} players`
+    });
+  } catch (error: any) {
+    console.error('Failed to bulk update players:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to bulk update players',
+      details: error.message
+    });
+  }
+});
+
+// Bulk delete players
+router.post('/bulk-delete', async (req: Request, res: Response) => {
+  try {
+    const { playerIds } = req.body;
+
+    if (!playerIds || !Array.isArray(playerIds) || playerIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Player IDs array is required'
+      });
+    }
+
+    const result = await prisma.player.deleteMany({
+      where: {
+        id: {
+          in: playerIds
+        }
       }
     });
 
     res.json({
       success: true,
-      message: 'Tag removed from player successfully'
+      message: `Successfully deleted ${result.count} players`
     });
   } catch (error: any) {
-    console.error('Failed to remove tag from player:', error);
+    console.error('Failed to bulk delete players:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to remove tag from player',
+      error: 'Failed to bulk delete players',
+      details: error.message
+    });
+  }
+});
+
+// Bulk draft players
+router.post('/bulk-draft', async (req: Request, res: Response) => {
+  try {
+    const { playerIds } = req.body;
+
+    if (!playerIds || !Array.isArray(playerIds) || playerIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Player IDs array is required'
+      });
+    }
+
+    await prisma.player.updateMany({
+      where: {
+        id: {
+          in: playerIds
+        }
+      },
+      data: {
+        isDrafted: true
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Successfully drafted ${playerIds.length} players`
+    });
+  } catch (error: any) {
+    console.error('Failed to bulk draft players:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to bulk draft players',
       details: error.message
     });
   }
 });
 
 // =============================================================================
-// IMPORT/EXPORT OPERATIONS  
+// SEARCH AND FILTERING
 // =============================================================================
 
-// Export players to Excel
-router.get('/export', async (req: Request, res: Response) => {
+// Search players
+router.get('/search', async (req: Request, res: Response) => {
   try {
-    const { format = 'excel' } = req.query;
+    const { q: query, position, team, isDrafted, limit = '50' } = req.query;
+
+    if (!query) {
+      return res.status(400).json({
+        success: false,
+        error: 'Query parameter is required'
+      });
+    }
+
+    const filters: any = {
+      name: {
+        contains: query as string,
+        mode: 'insensitive'
+      },
+      ...(position && { position: position as string }),
+      ...(team && { team: team as string }),
+      ...(isDrafted !== undefined && { isDrafted: isDrafted === 'true' })
+    };
 
     const players = await prisma.player.findMany({
+      where: filters,
       include: {
         tier: true,
         playerTags: {
@@ -674,98 +1104,70 @@ router.get('/export', async (req: Request, res: Response) => {
         },
         notes: true
       },
-      orderBy: [
-        { customRank: 'asc' },
-        { rank: 'asc' },
-        { name: 'asc' }
-      ]
+      take: parseInt(limit as string),
+      orderBy: { rank: 'asc' }
     });
 
-    if (format === 'excel') {
-      // Create Excel workbook
-      const ExcelJS = require('exceljs');
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Players');
-
-      // Add headers
-      worksheet.addRow([
-        'Name', 'Position', 'Team', 'Rank', 'Custom Rank', 'Projected Points',
-        'VORP', 'ADP', 'Bye Week', 'Is Drafted', 'Tier', 'Tags', 'Notes Count',
-        'Data Source', 'Sleeper ID'
-      ]);
-
-      // Add player data
-      players.forEach(player => {
-        worksheet.addRow([
-          player.name,
-          player.position,
-          player.team,
-          player.rank,
-          player.customRank,
-          player.projectedPoints,
-          player.vorp,
-          player.adp,
-          player.byeWeek,
-          player.isDrafted,
-          player.tier?.name || '',
-          player.playerTags.map(pt => pt.tag.name).join(', '),
-          player.notes.length,
-          player.dataSource,
-          player.sleeperId
-        ]);
-      });
-
-      // Generate buffer
-      const buffer = await workbook.xlsx.writeBuffer();
-
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=fantasy_players.xlsx');
-      res.send(buffer);
-    } else {
-      res.json({
-        success: true,
-        data: players
-      });
-    }
+    res.json({
+      success: true,
+      data: players
+    });
   } catch (error: any) {
-    console.error('Failed to export players:', error);
+    console.error('Failed to search players:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to export players',
+      error: 'Failed to search players',
       details: error.message
     });
   }
 });
 
-// Import players from Excel
-router.post('/import', upload.single('file'), async (req: MulterRequest, res: Response) => {
+// Get player statistics
+router.get('/stats', async (req: Request, res: Response) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: 'No file provided'
-      });
-    }
-
-    const { mergeStrategy = 'update' } = req.query;
-    const enhancedImportService = new EnhancedPlayerImportService(prisma);
-    
-    const result = await enhancedImportService.importFromExcel(req.file.path, {
-      updateStrategy: mergeStrategy as 'merge' | 'overwrite'
+    const stats = await playerService.getPlayerStats();
+    res.json({
+      success: true,
+      data: stats
     });
+  } catch (error: any) {
+    console.error('Failed to get player stats:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get player stats',
+      details: error.message
+    });
+  }
+});
 
-    // Clean up uploaded file
-    fs.unlinkSync(req.file.path);
+// Get position-specific statistics
+router.get('/stats/position/:position', async (req: Request, res: Response) => {
+  try {
+    const { position } = req.params;
+    
+    const stats = await prisma.player.groupBy({
+      by: ['position'],
+      where: {
+        position: position.toUpperCase()
+      },
+      _count: {
+        id: true
+      },
+      _avg: {
+        projectedPoints: true,
+        adp: true
+      }
+    });
 
     res.json({
       success: true,
-      data: result
+      data: stats
     });
   } catch (error: any) {
-    console.error('Import failed:', error);
+    console.error('Failed to get position stats:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to import players',
+      error: 'Failed to get position stats',
       details: error.message
     });
   }

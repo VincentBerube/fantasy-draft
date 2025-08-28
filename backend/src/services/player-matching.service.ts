@@ -1,6 +1,24 @@
 // backend/src/services/player-matching.service.ts
 import { PrismaClient } from '@prisma/client';
-import { normalizePlayerName, calculateStringSimilarity } from '../utils/string-utils';
+import { normalizePlayerName, calculateStringSimilarity } from '../utils/string.utils';
+
+export interface ExcelPlayerData {
+  name: string;
+  position?: string;
+  team?: string;
+  additionalData: Record<string, any>;
+  rowIndex: number;
+}
+
+export interface DatabasePlayer {
+  id: string;
+  name: string;
+  position: string;
+  team?: string | null;
+  sleeperId?: string | null;
+  aliases: string[];
+  dataSource: string;
+}
 
 export interface PlayerMatchResult {
   exactMatch?: string; // Player ID
@@ -14,104 +32,14 @@ export interface PlayerMatchResult {
   requiresManualReview: boolean;
 }
 
-export interface ExcelPlayerData {
-  name: string;
-  position?: string | undefined;
-  team?: string | undefined;
-  additionalData: Record<string, any>; // Dynamic columns
-}
-
-export interface BatchMatchResult {
-  autoMatched: Array<{
-    excelIndex: number;
-    playerId: string;
-    confidence: number;
-  }>;
-  needsReview: Array<{
-    excelIndex: number;
-    matches: PlayerMatchResult;
-  }>;
-  noMatches: Array<{
-    excelIndex: number;
-  }>;
-}
-
-interface DatabasePlayer {
-  id: string;
-  name: string;
-  position: string;
-  team: string | null;
-  sleeperId: string | null;
-  aliases: string[];
-  dataSource: string;
-}
-
 export class PlayerMatchingService {
   constructor(private prisma: PrismaClient) {}
 
   /**
-   * Batch match multiple players efficiently
-   */
-  async batchMatchPlayers(excelPlayers: ExcelPlayerData[]): Promise<BatchMatchResult> {
-    // Get all players once for efficiency
-    const allPlayers = await this.prisma.player.findMany({
-      select: {
-        id: true,
-        name: true,
-        position: true,
-        team: true,
-        sleeperId: true,
-        aliases: true,
-        dataSource: true
-      }
-    });
-
-    const result: BatchMatchResult = {
-      autoMatched: [],
-      needsReview: [],
-      noMatches: []
-    };
-
-    for (let i = 0; i < excelPlayers.length; i++) {
-      const matchResult = await this.findPlayerMatch(excelPlayers[i], allPlayers);
-      
-      if (matchResult.exactMatch) {
-        result.autoMatched.push({
-          excelIndex: i,
-          playerId: matchResult.exactMatch,
-          confidence: 1.0
-        });
-      } else if (matchResult.potentialMatches.length > 0) {
-        // Check if top match is highly confident
-        const topMatch = matchResult.potentialMatches[0];
-        if (topMatch.confidence >= 0.9) {
-          result.autoMatched.push({
-            excelIndex: i,
-            playerId: topMatch.playerId,
-            confidence: topMatch.confidence
-          });
-        } else {
-          result.needsReview.push({
-            excelIndex: i,
-            matches: matchResult
-          });
-        }
-      } else {
-        result.noMatches.push({
-          excelIndex: i
-        });
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Smart player matching that handles variations in names
-   * Prioritizes Sleeper data but allows Excel supplements
+   * Find matching players in database for an Excel player
    */
   async findPlayerMatch(
-    excelPlayer: ExcelPlayerData, 
+    excelPlayer: ExcelPlayerData,
     allPlayers?: DatabasePlayer[]
   ): Promise<PlayerMatchResult> {
     const { name, position, team } = excelPlayer;
@@ -247,13 +175,15 @@ export class PlayerMatchingService {
         team: team?.toUpperCase(),
         dataSource: 'excel',
         sleeperId: null,
-        // Map additional data to player fields
-        rank: additionalData.rank ? Number(additionalData.rank) : null,
-        customRank: additionalData.customRank ? Number(additionalData.customRank) : null,
-        projectedPoints: additionalData.projectedPoints ? Number(additionalData.projectedPoints) : null,
-        vorp: additionalData.vorp ? Number(additionalData.vorp) : null,
-        adp: additionalData.adp ? Number(additionalData.adp) : null,
-        byeWeek: additionalData.byeWeek ? Number(additionalData.byeWeek) : null,
+        // Map additional data to player fields with proper validation
+        rank: this.safeParseNumber(additionalData.rank),
+        customRank: this.safeParseNumber(additionalData.customRank),
+        projectedPoints: this.safeParseFloat(additionalData.projectedPoints),
+        vorp: this.safeParseFloat(additionalData.vorp),
+        adp: this.safeParseFloat(additionalData.adp),
+        byeWeek: this.safeParseNumber(additionalData.byeWeek),
+        lastSeasonPoints: this.safeParseFloat(additionalData.lastSeasonPoints),
+        positionalRank: additionalData.positionalRank || null,
         isDrafted: false,
         aliases: [],
         lastSyncAt: new Date()
@@ -324,7 +254,7 @@ export class PlayerMatchingService {
     // Define which fields can be updated based on settings
     const updatableFields = options.preserveSleeperData && player.sleeperId ? 
       ['customRank', 'vorp'] : // Only custom fields if preserving Sleeper data
-      ['rank', 'customRank', 'projectedPoints', 'vorp', 'adp', 'byeWeek', 'team'];
+      ['rank', 'customRank', 'projectedPoints', 'vorp', 'adp', 'byeWeek', 'team', 'positionalRank', 'lastSeasonPoints'];
 
     for (const field of updatableFields) {
       const newValue = excelData[field];
@@ -332,14 +262,13 @@ export class PlayerMatchingService {
 
       if (newValue != null && newValue !== currentValue) {
         if (options.updateStrategy === 'overwrite' || currentValue == null) {
-          updateData[field] = typeof newValue === 'string' && !isNaN(Number(newValue)) ? 
-            Number(newValue) : newValue;
+          // Use safe parsing for numeric fields
+          updateData[field] = this.safeParseFieldValue(field, newValue);
           fieldsChanged.push(field);
         } else if (options.updateStrategy === 'merge') {
           // For merge, only update if current value is null/empty
           if (currentValue == null || currentValue === '' || currentValue === 0) {
-            updateData[field] = typeof newValue === 'string' && !isNaN(Number(newValue)) ? 
-              Number(newValue) : newValue;
+            updateData[field] = this.safeParseFieldValue(field, newValue);
             fieldsChanged.push(field);
           }
         }
@@ -356,5 +285,107 @@ export class PlayerMatchingService {
     }
 
     return fieldsChanged;
+  }
+
+  /**
+   * Safely parse field values based on their expected types
+   */
+  private safeParseFieldValue(fieldName: string, value: any): any {
+    const numericFields = ['rank', 'customRank', 'byeWeek'];
+    const floatFields = ['projectedPoints', 'vorp', 'adp', 'lastSeasonPoints'];
+    
+    if (numericFields.includes(fieldName)) {
+      return this.safeParseNumber(value);
+    } else if (floatFields.includes(fieldName)) {
+      return this.safeParseFloat(value);
+    } else {
+      return value;
+    }
+  }
+
+  /**
+   * Safely parse integer values
+   */
+  private safeParseNumber(value: any): number | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    
+    const parsed = parseInt(String(value), 10);
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  /**
+   * Safely parse float values
+   */
+  private safeParseFloat(value: any): number | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    
+    const parsed = parseFloat(String(value));
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  /**
+   * Extract player data for comparison
+   */
+  private extractPlayerData(player: any): Record<string, any> {
+    return {
+      name: player.name,
+      position: player.position,
+      team: player.team,
+      rank: player.rank,
+      customRank: player.customRank,
+      projectedPoints: player.projectedPoints,
+      vorp: player.vorp,
+      adp: player.adp,
+      byeWeek: player.byeWeek,
+      lastSeasonPoints: player.lastSeasonPoints,
+      positionalRank: player.positionalRank,
+      isDrafted: player.isDrafted,
+      dataSource: player.dataSource,
+      sleeperId: player.sleeperId
+    };
+  }
+
+  /**
+   * Detect conflicts between existing and new data
+   */
+  private detectConflicts(existingPlayer: any, newData: Record<string, any>): string[] {
+    const conflicts: string[] = [];
+    const fieldsToCheck = ['position', 'team', 'rank', 'projectedPoints', 'adp'];
+
+    for (const field of fieldsToCheck) {
+      const existing = existingPlayer[field];
+      const newValue = newData[field];
+
+      if (existing != null && newValue != null && existing !== newValue) {
+        conflicts.push(`${field}: ${existing} → ${newValue}`);
+      }
+    }
+
+    return conflicts;
+  }
+
+  /**
+   * Resolve a manual match decision
+   */
+  async resolveManualMatch(
+    excelRowIndex: number,
+    selectedPlayerId: string,
+    excelData: Record<string, any>,
+    options: {
+      updateStrategy: 'merge' | 'overwrite';
+      preserveSleeperData: boolean;
+    }
+  ): Promise<void> {
+    try {
+      await this.updatePlayerWithExcelData(selectedPlayerId, excelData, options);
+      console.log(`✅ Manual match resolved: Row ${excelRowIndex} → Player ${selectedPlayerId}`);
+    } catch (error: any) {
+      console.error(`❌ Failed to resolve manual match for row ${excelRowIndex}:`, error);
+      throw new Error(`Failed to resolve manual match: ${error.message}`);
+    }
   }
 }

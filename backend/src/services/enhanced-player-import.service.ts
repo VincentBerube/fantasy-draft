@@ -78,24 +78,17 @@ export class EnhancedPlayerImportService {
     };
 
     const finalOptions = { ...defaultOptions, ...options };
+    this.validateImportOptions(finalOptions);
 
     try {
-      // Step 1: Parse Excel file with dynamic column detection
-      console.log('📊 Parsing Excel file with dynamic column detection...');
-      const parsedData = await this.excelParser.parseExcelFile(filePath);
-      
-      // Step 2: Batch match players
-      console.log('🔍 Matching players with existing database...');
-      const matchResults = await this.playerMatcher.batchMatchPlayers(
-        parsedData.players.map(p => ({
-          name: p.name,
-          position: p.position,
-          team: p.team,
-          additionalData: p.additionalData
-        }))
-      );
+      console.log('🚀 Starting enhanced Excel import...');
+      console.log('📋 Options:', finalOptions);
 
-      // Step 3: Process results
+      // Parse Excel file
+      const parsedData = await this.excelParser.parseExcelFile(filePath);
+      console.log(`📊 Parsed ${parsedData.players.length} players from Excel`);
+
+      // Initialize result object
       const result: ImportResult = {
         summary: {
           totalProcessed: parsedData.players.length,
@@ -108,52 +101,35 @@ export class EnhancedPlayerImportService {
         needsReview: [],
         newPlayers: [],
         errors: [],
-        columnMapping: parsedData.columns.map(col => ({
-          excelColumn: col.header,
-          mappedTo: col.mappedField,
-          processed: col.mappedField !== null
+        columnMapping: parsedData.columnMappings.map(mapping => ({
+          excelColumn: mapping.excelColumn,
+          mappedTo: mapping.playerField,
+          processed: mapping.playerField !== null
         }))
       };
 
-      // Process auto-matched players
-      for (const match of matchResults.autoMatched) {
-        try {
-          const excelPlayer = parsedData.players[match.excelIndex];
-          const fieldsUpdated = await this.updatePlayerFromExcel(
-            match.playerId,
-            excelPlayer,
-            finalOptions
-          );
-
-          result.autoMatched.push({
-            excelRowIndex: excelPlayer.rowIndex,
-            playerName: excelPlayer.name,
-            playerId: match.playerId,
-            fieldsUpdated
-          });
-
-          result.summary.autoMatched++;
-        } catch (error: any) {
-          const excelPlayer = parsedData.players[match.excelIndex];
-          result.errors.push({
-            excelRowIndex: excelPlayer.rowIndex,
-            playerName: excelPlayer.name,
-            error: error.message
-          });
-          result.summary.failed++;
+      // Get all existing players for matching
+      const allPlayers = await this.prisma.player.findMany({
+        select: {
+          id: true,
+          name: true,
+          position: true,
+          team: true,
+          sleeperId: true,
+          aliases: true,
+          dataSource: true
         }
-      }
+      });
 
-      // Process players needing review
-      for (const reviewItem of matchResults.needsReview) {
-        const excelPlayer = parsedData.players[reviewItem.excelIndex];
-        
-        // Check if top match exceeds auto-match threshold
-        const topMatch = reviewItem.matches.potentialMatches[0];
-        if (topMatch && topMatch.confidence >= finalOptions.autoMatchThreshold) {
-          try {
+      // Process each player
+      for (const excelPlayer of parsedData.players) {
+        try {
+          const matchResult = await this.playerMatcher.findPlayerMatch(excelPlayer, allPlayers);
+
+          if (matchResult.exactMatch) {
+            // Auto-match: update existing player
             const fieldsUpdated = await this.updatePlayerFromExcel(
-              topMatch.playerId,
+              matchResult.exactMatch,
               excelPlayer,
               finalOptions
             );
@@ -161,72 +137,90 @@ export class EnhancedPlayerImportService {
             result.autoMatched.push({
               excelRowIndex: excelPlayer.rowIndex,
               playerName: excelPlayer.name,
-              playerId: topMatch.playerId,
+              playerId: matchResult.exactMatch,
               fieldsUpdated
             });
 
             result.summary.autoMatched++;
-          } catch (error: any) {
-            result.errors.push({
+
+          } else if (matchResult.potentialMatches.length > 0 && 
+                     matchResult.potentialMatches[0].confidence >= finalOptions.autoMatchThreshold &&
+                     !matchResult.requiresManualReview) {
+            
+            // High confidence fuzzy match
+            const bestMatch = matchResult.potentialMatches[0];
+            const fieldsUpdated = await this.updatePlayerFromExcel(
+              bestMatch.playerId,
+              excelPlayer,
+              finalOptions
+            );
+
+            result.autoMatched.push({
               excelRowIndex: excelPlayer.rowIndex,
               playerName: excelPlayer.name,
-              error: error.message
+              playerId: bestMatch.playerId,
+              fieldsUpdated
             });
-            result.summary.failed++;
+
+            result.summary.autoMatched++;
+
+          } else if (matchResult.potentialMatches.length > 0) {
+            // Needs manual review
+            result.needsReview.push({
+              excelRowIndex: excelPlayer.rowIndex,
+              playerName: excelPlayer.name,
+              potentialMatches: matchResult.potentialMatches,
+              excelData: excelPlayer.additionalData
+            });
+
+            result.summary.manualReviewNeeded++;
+
+          } else if (finalOptions.createNewPlayers) {
+            // No matches found - create new player
+            try {
+              const newPlayerId = await this.playerMatcher.createPlayerFromExcel({
+                name: excelPlayer.name,
+                position: excelPlayer.position,
+                team: excelPlayer.team,
+                additionalData: excelPlayer.additionalData,
+                rowIndex: excelPlayer.rowIndex
+              });
+
+              result.newPlayers.push({
+                excelRowIndex: excelPlayer.rowIndex,
+                playerName: excelPlayer.name,
+                playerId: newPlayerId,
+                dataSource: 'excel'
+              });
+
+              result.summary.newPlayersCreated++;
+            } catch (error: any) {
+              result.errors.push({
+                excelRowIndex: excelPlayer.rowIndex,
+                playerName: excelPlayer.name,
+                error: error.message
+              });
+              result.summary.failed++;
+            }
+          } else {
+            // No matches and not creating new players
+            result.needsReview.push({
+              excelRowIndex: excelPlayer.rowIndex,
+              playerName: excelPlayer.name,
+              potentialMatches: [],
+              excelData: excelPlayer.additionalData
+            });
+            result.summary.manualReviewNeeded++;
           }
-        } else {
-          result.needsReview.push({
+
+        } catch (error: any) {
+          console.error(`❌ Error processing player "${excelPlayer.name}":`, error);
+          result.errors.push({
             excelRowIndex: excelPlayer.rowIndex,
             playerName: excelPlayer.name,
-            potentialMatches: reviewItem.matches.potentialMatches,
-            excelData: excelPlayer.additionalData
+            error: error.message
           });
-
-          result.summary.manualReviewNeeded++;
-        }
-      }
-
-      // Process unmatched players (create new if enabled)
-      if (finalOptions.createNewPlayers) {
-        for (const noMatch of matchResults.noMatches) {
-          try {
-            const excelPlayer = parsedData.players[noMatch.excelIndex];
-            const newPlayerId = await this.playerMatcher.createPlayerFromExcel({
-              name: excelPlayer.name,
-              position: excelPlayer.position,
-              team: excelPlayer.team,
-              additionalData: excelPlayer.additionalData
-            });
-
-            result.newPlayers.push({
-              excelRowIndex: excelPlayer.rowIndex,
-              playerName: excelPlayer.name,
-              playerId: newPlayerId,
-              dataSource: 'excel'
-            });
-
-            result.summary.newPlayersCreated++;
-          } catch (error: any) {
-            const excelPlayer = parsedData.players[noMatch.excelIndex];
-            result.errors.push({
-              excelRowIndex: excelPlayer.rowIndex,
-              playerName: excelPlayer.name,
-              error: error.message
-            });
-            result.summary.failed++;
-          }
-        }
-      } else {
-        // Add unmatched to review list
-        for (const noMatch of matchResults.noMatches) {
-          const excelPlayer = parsedData.players[noMatch.excelIndex];
-          result.needsReview.push({
-            excelRowIndex: excelPlayer.rowIndex,
-            playerName: excelPlayer.name,
-            potentialMatches: [],
-            excelData: excelPlayer.additionalData
-          });
-          result.summary.manualReviewNeeded++;
+          result.summary.failed++;
         }
       }
 
@@ -262,47 +256,50 @@ export class EnhancedPlayerImportService {
       position?: string;
       confidence: number;
       potentialMatch?: {
-        name: string;
+        playerName: string;
         confidence: number;
+        isSleeperPlayer: boolean;
       };
+      additionalFields: Record<string, any>;
     }>;
     summary: {
       totalRows: number;
+      validPlayers: number;
       recognizedColumns: number;
-      estimatedMatches: number;
+      unknownColumns: number;
+      estimatedAutoMatches: number;
       estimatedNewPlayers: number;
     };
     warnings: string[];
   }> {
     try {
-      // Get column analysis
-      const columnAnalysis = await this.excelParser.getColumnAnalysis(filePath);
-      
-      // Parse a sample of players for preview
-      const sampleData = await this.excelParser.parseExcelFile(filePath);
-      const samplePlayers = sampleData.players.slice(0, 10); // First 10 players
-      
-      // Quick match for preview
-      const playerSamples = [];
-      for (const player of samplePlayers) {
-        const matchResult = await this.playerMatcher.findPlayerMatch({
-          name: player.name,
-          position: player.position,
-          team: player.team,
-          additionalData: player.additionalData
-        });
+      console.log('📊 Generating import preview...');
 
+      // Parse Excel file
+      const parsedData = await this.excelParser.parseExcelFile(filePath);
+      const sampleData = await this.excelParser.getSampleData(filePath, 10);
+      const columnAnalysis = await this.excelParser.analyzeColumns(filePath);
+
+      // Get sample of players for preview
+      const samplePlayers = parsedData.players.slice(0, 10);
+      const playerSamples = [];
+
+      for (const excelPlayer of samplePlayers) {
+        const matchResult = await this.playerMatcher.findPlayerMatch(excelPlayer);
+        
         playerSamples.push({
-          name: player.name,
-          position: player.position,
-          confidence: player.confidence,
+          name: excelPlayer.name,
+          position: excelPlayer.position,
+          confidence: matchResult.exactMatch ? 1.0 : 
+            matchResult.potentialMatches.length > 0 ? matchResult.potentialMatches[0].confidence : 0,
           potentialMatch: matchResult.exactMatch ? {
             name: 'Exact match found',
             confidence: 1.0
           } : matchResult.potentialMatches[0] ? {
             name: matchResult.potentialMatches[0].playerName,
             confidence: matchResult.potentialMatches[0].confidence
-          } : undefined
+          } : undefined,
+          additionalFields: excelPlayer.additionalData
         });
       }
 
@@ -328,9 +325,11 @@ export class EnhancedPlayerImportService {
         playerSamples,
         summary: {
           totalRows: sampleData.metadata.totalRows,
+          validPlayers: parsedData.players.length,
           recognizedColumns,
-          estimatedMatches: Math.floor(sampleData.metadata.validRows * 0.8),
-          estimatedNewPlayers: Math.floor(sampleData.metadata.validRows * 0.2)
+          unknownColumns: columnAnalysis.columns.length - recognizedColumns,
+          estimatedAutoMatches: Math.floor(parsedData.players.length * 0.8),
+          estimatedNewPlayers: Math.floor(parsedData.players.length * 0.2)
         },
         warnings
       };
@@ -359,6 +358,32 @@ export class EnhancedPlayerImportService {
   }
 
   /**
+   * Resolve a manual match decision
+   */
+  async resolveManualMatch(data: {
+    excelRowIndex: number;
+    selectedPlayerId: string;
+    excelData: Record<string, any>;
+    options: any;
+  }): Promise<void> {
+    const { selectedPlayerId, excelData, options } = data;
+    
+    try {
+      await this.playerMatcher.resolveManualMatch(
+        data.excelRowIndex,
+        selectedPlayerId,
+        excelData,
+        {
+          updateStrategy: options.updateStrategy || 'merge',
+          preserveSleeperData: options.preserveSleeperData !== false
+        }
+      );
+    } catch (error: any) {
+      throw new Error(`Failed to resolve manual match: ${error.message}`);
+    }
+  }
+
+  /**
    * Validate import options
    */
   private validateImportOptions(options: ImportOptions): void {
@@ -380,39 +405,35 @@ export class EnhancedPlayerImportService {
     averageMatchRate: number;
     lastImportDate?: Date;
   }> {
-    const importSessions = await this.prisma.importSession.findMany({
-      select: {
-        summary: true,
-        createdAt: true
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    });
+    try {
+      const sessions = await this.prisma.importSession.findMany({
+        where: { rolledBack: false },
+        orderBy: { createdAt: 'desc' }
+      });
 
-    if (importSessions.length === 0) {
+      const totalImports = sessions.length;
+      let totalPlayersProcessed = 0;
+      let totalMatches = 0;
+
+      for (const session of sessions) {
+        const summary = session.summary as any;
+        totalPlayersProcessed += summary.totalProcessed || 0;
+        totalMatches += summary.autoMatched || 0;
+      }
+
+      return {
+        totalImports,
+        totalPlayersProcessed,
+        averageMatchRate: totalPlayersProcessed > 0 ? totalMatches / totalPlayersProcessed : 0,
+        lastImportDate: sessions[0]?.createdAt
+      };
+    } catch (error: any) {
+      console.error('Failed to get import stats:', error);
       return {
         totalImports: 0,
         totalPlayersProcessed: 0,
         averageMatchRate: 0
       };
     }
-
-    const totalProcessed = importSessions.reduce((sum, session) => {
-      const summary = session.summary as any;
-      return sum + (summary.totalProcessed || 0);
-    }, 0);
-
-    const totalMatched = importSessions.reduce((sum, session) => {
-      const summary = session.summary as any;
-      return sum + (summary.playersModified || 0) + (summary.playersCreated || 0);
-    }, 0);
-
-    return {
-      totalImports: importSessions.length,
-      totalPlayersProcessed: totalProcessed,
-      averageMatchRate: totalProcessed > 0 ? totalMatched / totalProcessed : 0,
-      lastImportDate: importSessions[0]?.createdAt
-    };
   }
 }
