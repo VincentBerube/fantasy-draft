@@ -78,11 +78,33 @@ export const EnhancedPlayerList: React.FC = () => {
         playerApi.getTiers()
       ]);
 
-      // Ensure we always set arrays, even if API returns unexpected data
-      setPlayers(Array.isArray(playersResponse.data) ? playersResponse.data : []);
-      setTiers(Array.isArray(tiersResponse.data) ? tiersResponse.data : []);
+      // Enhanced logging to debug the issue
+      console.log('🔍 Raw API Responses:', {
+        playersResponse: playersResponse,
+        playersData: playersResponse.data,
+        playersDataData: playersResponse.data?.data,
+        playersType: typeof playersResponse.data,
+        playersLength: Array.isArray(playersResponse.data?.data) ? playersResponse.data.data.length : 'Not an array',
+        tiersResponse: tiersResponse,
+        tiersData: tiersResponse.data
+      });
+
+      // Handle the { success: true, data: [...] } response structure
+      const playersData = Array.isArray(playersResponse.data?.data) ? playersResponse.data.data : [];
+      const tiersData = Array.isArray(tiersResponse.data?.data) ? tiersResponse.data.data : [];
       
-      console.log(`📊 Loaded ${playersResponse.data?.length || 0} players from API`);
+      // FIXED: Normalize player data to ensure arrays are always defined
+      const normalizedPlayers = playersData.map((player: any) => ({
+        ...player,
+        playerTags: Array.isArray(player.playerTags) ? player.playerTags : [],
+        notes: Array.isArray(player.notes) ? player.notes : [],
+        aliases: Array.isArray(player.aliases) ? player.aliases : []
+      }));
+      
+      setPlayers(normalizedPlayers);
+      setTiers(tiersData);
+      
+      console.log(`📊 Loaded ${normalizedPlayers.length} players from API`);
     } catch (error: any) {
       console.error('Error fetching players:', error);
       setError('Failed to load players: ' + (error.response?.data?.error || error.message));
@@ -315,11 +337,16 @@ export const EnhancedPlayerList: React.FC = () => {
     }
   }, []);
 
-  // Filter players based on search and filters - with null safety
+  // Filter players based on search and filters - with null safety and debugging
   const filteredPlayers = useMemo(() => {
-    if (!Array.isArray(players)) return [];
+    if (!Array.isArray(players)) {
+      console.log('⚠️ Players is not an array:', players);
+      return [];
+    }
     
-    return players.filter(player => {
+    console.log(`🔍 Filtering ${players.length} players with filters:`, filters);
+    
+    const filtered = players.filter(player => {
       if (filters.searchTerm) {
         const searchLower = filters.searchTerm.toLowerCase();
         if (!player.name.toLowerCase().includes(searchLower) &&
@@ -330,6 +357,9 @@ export const EnhancedPlayerList: React.FC = () => {
       }
       return true;
     });
+    
+    console.log(`✅ Filtered result: ${filtered.length} players`);
+    return filtered;
   }, [players, filters.searchTerm]);
 
   // Update displayed players when filters change or page changes

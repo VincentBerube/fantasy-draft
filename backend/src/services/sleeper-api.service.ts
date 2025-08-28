@@ -81,9 +81,9 @@ export interface ConvertedPlayerData {
   sleeperId: string;
   dataSource: string;
   lastSyncAt: Date;
-  rank?: number;
-  depthChartPosition?: string;
-  depthChartOrder?: number;
+  rank?: number | null; // FIXED: Allow null values
+  depthChartPosition?: string | null; // FIXED: Allow null values
+  depthChartOrder?: number | null; // FIXED: Allow null values
 }
 
 class SleeperAPIService {
@@ -241,9 +241,9 @@ class SleeperAPIService {
       team: sleeperPlayer.team || null,
       projectedPoints,
       byeWeek: null, // Would need to get this from another source
-      rank: sleeperPlayer.search_rank || undefined,
-      depthChartPosition: sleeperPlayer.depth_chart_position || undefined,
-      depthChartOrder: sleeperPlayer.depth_chart_order || undefined,
+      rank: sleeperPlayer.search_rank && sleeperPlayer.search_rank < 9999 ? sleeperPlayer.search_rank : null, // FIXED: Don't assign huge placeholder ranks
+      depthChartPosition: sleeperPlayer.depth_chart_position || null,
+      depthChartOrder: sleeperPlayer.depth_chart_order || null,
       aliases: [
         sleeperPlayer.search_full_name,
         `${sleeperPlayer.first_name} ${sleeperPlayer.last_name}`,
@@ -292,7 +292,7 @@ class SleeperAPIService {
         }
       }
 
-      // Filter and convert players
+      // Filter and convert players with better ranking logic
       const filteredPlayers = Object.entries(sleeperPlayers)
         .filter(([_, player]) => {
           // Filter by active status
@@ -313,23 +313,30 @@ class SleeperAPIService {
           const playerData = this.convertToPlayerFormat(sleeperPlayer, projections[playerId]);
           return {
             ...playerData,
-            // Use multiple ranking criteria for better sorting
+            // FIXED: Better ranking for sorting - use projections as primary sort
             projectionScore: projections[playerId]?.pts_ppr || 0,
-            sleeperRank: sleeperPlayer.search_rank || 9999, // Lower is better
-            hasProjections: !projections[playerId]
+            sleeperRank: sleeperPlayer.search_rank || null, // FIXED: Keep as null, don't use 9999
+            hasProjections: Boolean(projections[playerId])
           };
         })
-        // Sort by projections first (if available), then by Sleeper's ranking
+        // FIXED: Better sorting logic
         .sort((a, b) => {
-          // If both have projections, sort by projected points
+          // First priority: Players with projections (sorted by projection score, descending)
           if (a.hasProjections && b.hasProjections) {
             return (b.projectionScore || 0) - (a.projectionScore || 0);
           }
-          // If only one has projections, prioritize that one
           if (a.hasProjections && !b.hasProjections) return -1;
           if (!a.hasProjections && b.hasProjections) return 1;
-          // If neither has projections, sort by Sleeper's ranking (lower rank = better)
-          return (a.sleeperRank || 9999) - (b.sleeperRank || 9999);
+          
+          // Second priority: Players with Sleeper ranks (sorted by rank, ascending)
+          if (a.sleeperRank !== null && b.sleeperRank !== null) {
+            return a.sleeperRank - b.sleeperRank;
+          }
+          if (a.sleeperRank !== null && b.sleeperRank === null) return -1;
+          if (a.sleeperRank === null && b.sleeperRank !== null) return 1;
+          
+          // Final priority: Alphabetical by name
+          return a.name.localeCompare(b.name);
         })
         // Take only the top N players
         .slice(0, topPlayersLimit)
