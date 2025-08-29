@@ -1,4 +1,3 @@
-// backend/prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,106 +8,76 @@ datasource db {
 }
 
 model Player {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Basic player info
-  name     String
-  position String
-  team     String?
+  id                String      @id @default(uuid())
+  name              String
+  position          String
+  team              String?
+  rank              Int?
+  positionalRank    String?
+  adp               Float?
+  vorp              Float?
+  projectedPoints   Float?
+  lastSeasonPoints  Float?
+  byeWeek           Int?
+  userNotes         String[]    @default([])
+  customTags        String[]    @default([])
+  tierId            String?
+  isDrafted         Boolean     @default(false)
+  customRank        Int?
+  aliases           String[]    @default([])
   
-  // Rankings and projections
-  rank            Int?
-  customRank      Int?
-  positionalRank  String?      // Added missing field
-  projectedPoints Float?
-  vorp            Float?
-  adp             Float?
-  byeWeek         Int?
-  lastSeasonPoints Float?      // Added missing field
+  // Relations
+  tier              Tier?       @relation(fields: [tierId], references: [id])
+  playerTags        PlayerTag[]
+  notes             Note[]
   
-  // Sleeper integration
-  sleeperId   String?  @unique
-  dataSource  String   @default("sleeper") // "sleeper", "excel", "manual"
-  lastSyncAt  DateTime?
-  
-  // Draft status
-  isDrafted Boolean @default(false)
-  
-  // Relationships
-  tierId String?
-  tier   Tier?   @relation(fields: [tierId], references: [id])
-  
-  playerTags PlayerTag[]
-  notes      Note[]
-  
-  // Additional fields
-  aliases                String[]
-  depthChartPosition     String?
-  depthChartOrder        Int?
-  
-  // Import tracking
-  importSessionId String?
-
-  @@map("players")
-}
-
-model ImportSession {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  summary    Json
-  changes    Json
-  rolledBack Boolean  @default(false)
-  
-  @@map("import_sessions")
-}
-
-model Tier {
-  id    String @id @default(uuid())
-  name  String @unique
-  color String
-  order Int    @unique
-
-  players Player[]
-
-  @@map("tiers")
+  @@unique([name, position])
 }
 
 model Tag {
-  id    String @id @default(uuid())
-  name  String @unique
-  color String
-
-  playerTags PlayerTag[]
-
-  @@map("tags")
+  id          String      @id @default(uuid())
+  name        String      @unique
+  color       String      @default("#3B82F6")
+  createdAt   DateTime    @default(now())
+  
+  // Relations
+  playerTags  PlayerTag[]
 }
 
 model PlayerTag {
-  id       String @id @default(uuid())
-  playerId String
-  tagId    String
-
-  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
+  id        String   @id @default(uuid())
+  playerId  String
+  tagId     String
+  createdAt DateTime @default(now())
+  
+  // Relations
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  
   @@unique([playerId, tagId])
-  @@map("player_tags")
 }
 
 model Note {
   id        String   @id @default(uuid())
+  playerId  String
+  content   String
+  color     String   @default("#6B7280")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
-  content  String
-  color    String   @default("#6B7280")
-  playerId String
+  // Relations
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
 
-  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
-
-  @@map("notes")
+model Tier {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  color     String   @default("#8B5CF6")
+  order     Int
+  createdAt DateTime @default(now())
+  
+  // Relations
+  players   Player[]
+  
+  @@index([order])
 }

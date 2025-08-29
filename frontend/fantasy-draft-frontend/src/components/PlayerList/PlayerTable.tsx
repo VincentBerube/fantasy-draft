@@ -1,83 +1,31 @@
-// frontend/fantasy-draft-frontend/src/components/PlayerList/PlayerTable.tsx
+// src/components/PlayerList/PlayerTable.tsx
 import { memo, useMemo, useState } from 'react';
-import type { Player, Tier, Tag } from '../../api/playerApi';
+import type { Player, Tier } from '../../api/playerApi';
 import { PlayerRow } from './PlayerRow';
 
 interface PlayerTableProps {
-  tierInfo?: Tier | null;
+  tierInfo: Tier | null | undefined;
   players: Player[];
   tiers: Tier[];
-  tags: Tag[]; // Add tags prop
   onToggleDrafted: (id: string, isDrafted: boolean) => void;
   onAssignTier: (id: string, tierId: string | null) => void;
-  onCellEdit: (id: string, field: string, value: any) => void;
-  onDeletePlayer: (id: string) => void;
-  onPlayerClick: (id: string) => void;
+  onEditCell: (id: string, field: string, value: any) => void;
+  onDelete: (id: string) => void;
+  onShowDetail: (id: string) => void;
   onShowNotes: (id: string) => void;
-  getTierInfo: (tierId: string | null) => Tier | null;
-  pendingUpdates: Set<string>;
 }
-
-// Helper function to format depth chart information
-const formatDepthChart = (depthChartPosition?: string, depthChartOrder?: number) => {
-  if (!depthChartPosition) return '';
-  
-  // Map Sleeper's depth chart positions to more readable formats
-  const positionMap: Record<string, string> = {
-    'QB': 'QB',
-    'RB': 'RB', 
-    '3RB': '3rd Down RB',
-    'WR': 'WR',
-    'SWR': 'Slot WR',
-    'TE': 'TE',
-    'K': 'K',
-    'DEF': 'DEF'
-  };
-  
-  const basePosition = positionMap[depthChartPosition] || depthChartPosition;
-  
-  // Add order number if available (WR1, WR2, etc.)
-  if (depthChartOrder && depthChartOrder > 1) {
-    return `${basePosition} ${depthChartOrder}`;
-  }
-  
-  return basePosition;
-};
-
-// Helper function to get depth chart color based on position and order
-const getDepthChartColor = (depthChartPosition?: string, depthChartOrder?: number) => {
-  if (!depthChartPosition) return 'text-gray-400';
-  
-  // Special highlighting for valuable fantasy positions
-  if (depthChartPosition === 'SWR') return 'text-purple-600 font-semibold'; // Slot receivers are gold!
-  if (depthChartPosition === '3RB') return 'text-blue-600 font-semibold'; // 3rd down backs get targets
-  
-  // Color based on depth chart order
-  if (!depthChartOrder || depthChartOrder === 1) {
-    return 'text-green-600 font-semibold'; // Starter
-  } else if (depthChartOrder === 2) {
-    return 'text-yellow-600'; // Backup  
-  } else if (depthChartOrder === 3) {
-    return 'text-orange-600'; // 3rd string
-  } else {
-    return 'text-red-600'; // Deep backup
-  }
-};
 
 // PERFORMANCE: Memoize the table to prevent unnecessary re-renders
 export const PlayerTable = memo(function PlayerTable({
   tierInfo,
   players,
   tiers,
-  tags,
   onToggleDrafted,
   onAssignTier,
-  onCellEdit,
-  onDeletePlayer,
-  onPlayerClick,
-  onShowNotes,
-  getTierInfo,
-  pendingUpdates
+  onEditCell,
+  onDelete,
+  onShowDetail,
+  onShowNotes
 }: PlayerTableProps) {
   const CHUNK_SIZE = 50;
   const [visibleChunks, setVisibleChunks] = useState(1); // Start by showing 1 chunk
@@ -116,28 +64,60 @@ export const PlayerTable = memo(function PlayerTable({
         }}
       >
         <h3 className="text-lg font-semibold text-gray-800">
-          {tierInfo ? `${tierInfo.name} (${players.length} players)` : `All Players (${players.length})`}
+          {tierInfo ? tierInfo.name : 'Unassigned Players'} 
+          <span className="ml-2 text-sm font-normal text-gray-600">
+            ({players.length} players)
+            {hasMorePlayers && (
+              <span className="text-blue-600"> - Showing {visiblePlayers.length}</span>
+            )}
+          </span>
         </h3>
       </div>
-      
+
       <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-8">Draft</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Player</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Pos</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Team</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Rank</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Proj</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Depth</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Tier</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Tags</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Notes</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Actions</th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Drafted
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Rank
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Player
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Position
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Team
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Bye
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Proj. Points
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                VORP
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Tier
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Tags
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Notes
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
+            {/* Render visible players */}
             {visiblePlayers.map((player) => (
               <PlayerRow
                 key={player.id}
@@ -145,28 +125,49 @@ export const PlayerTable = memo(function PlayerTable({
                 tiers={tiers}
                 onToggleDrafted={onToggleDrafted}
                 onAssignTier={onAssignTier}
-                onEditCell={onCellEdit}
-                onDelete={onDeletePlayer}
-                onShowDetail={onPlayerClick}
+                onEditCell={onEditCell}
+                onDelete={onDelete}
+                onShowDetail={onShowDetail}
                 onShowNotes={onShowNotes}
-                isPending={pendingUpdates.has(player.id)}
               />
             ))}
+            
+            {/* Load more button */}
+            {hasMorePlayers && (
+              <tr>
+                <td colSpan={12} className="px-6 py-6 text-center bg-gray-50">
+                  <button
+                    onClick={handleLoadMore}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-blue-600 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                  >
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                    Load {Math.min(CHUNK_SIZE, remainingPlayers)} more players
+                    <span className="ml-2 text-xs text-gray-500">
+                      ({remainingPlayers} remaining)
+                    </span>
+                  </button>
+                </td>
+              </tr>
+            )}
+
+            {/* Show all button for convenience */}
+            {hasMorePlayers && chunkedPlayers.length > 2 && (
+              <tr>
+                <td colSpan={12} className="px-6 py-2 text-center">
+                  <button
+                    onClick={() => setVisibleChunks(chunkedPlayers.length)}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  >
+                    Show all {players.length} players
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
-
-      {/* Load More Button */}
-      {hasMorePlayers && (
-        <div className="p-4 text-center border-t bg-gray-50">
-          <button
-            onClick={handleLoadMore}
-            className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-          >
-            Load More ({remainingPlayers} remaining)
-          </button>
-        </div>
-      )}
     </div>
   );
 });

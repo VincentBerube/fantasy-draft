@@ -1,65 +1,62 @@
-// backend/src/services/player.service.ts
-import { PrismaClient, Player, Tier, Tag, PlayerTag, Note } from '@prisma/client';
+import { Player, PrismaClient, Tag, Note, Tier } from '@prisma/client';
+import { parsePlayerData } from '../data/excel-parser';
 import * as ExcelJS from 'exceljs';
+import { removeUndefined } from '../utils/object.utils';
 
+const prisma = new PrismaClient({
+  log: ['warn', 'error'],
+});
+
+// Extended player type with relations
 type PlayerWithRelations = Player & {
-  tier: Tier | null;
-  playerTags: (PlayerTag & { tag: Tag })[];
+  playerTags: Array<{ tag: Tag }>;
   notes: Note[];
+  tier?: Tier | null;
 };
 
-function removeUndefined(obj: any): any {
-  const cleaned: any = {};
-  for (const key in obj) {
-    if (obj[key] !== undefined) {
-      cleaned[key] = obj[key];
-    }
-  }
-  return cleaned;
-}
-
 export class PlayerService {
-  constructor(private prisma: PrismaClient) {}
-
-  async findPotentialDuplicates(name: string, position: string, excludeId?: string) {
-    const normalizedName = name.toLowerCase().trim();
+  // Duplicate detection using fuzzy matching
+  private calculateSimilarity(str1: string, str2: string): number {
+    const s1 = str1.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const s2 = str2.toLowerCase().replace(/[^a-z0-9]/g, '');
     
-    const whereClause: any = {
-      position,
-      OR: [
-        {
-          name: {
-            contains: normalizedName,
-            mode: 'insensitive'
-          }
-        },
-        {
-          aliases: {
-            hasSome: [name]
-          }
-        }
-      ]
-    };
-
-    if (excludeId) {
-      whereClause.NOT = { id: excludeId };
-    }
-
-    return this.prisma.player.findMany({
-      where: whereClause,
-      include: {
-        tier: true,
-        playerTags: {
-          include: {
-            tag: true
-          }
-        },
-        notes: true
+    // Calculate Levenshtein distance
+    const matrix = Array(s1.length + 1).fill(null).map(() => Array(s2.length + 1).fill(0));
+    
+    for (let i = 0; i <= s1.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= s2.length; j++) matrix[0][j] = j;
+    
+    for (let i = 1; i <= s1.length; i++) {
+      for (let j = 1; j <= s2.length; j++) {
+        const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
       }
+    }
+    
+    const maxLength = Math.max(s1.length, s2.length);
+    return maxLength === 0 ? 1 : 1 - (matrix[s1.length][s2.length] / maxLength);
+  }
+
+  private async findPotentialDuplicates(name: string, position: string): Promise<Player[]> {
+    const players = await prisma.player.findMany({
+      where: { position }
+    });
+    
+    return players.filter(player => {
+      const similarity = this.calculateSimilarity(name, player.name);
+      const aliasMatch = player.aliases.some(alias => 
+        this.calculateSimilarity(name, alias) > 0.85
+      );
+      return similarity > 0.85 || aliasMatch;
     });
   }
 
-  async importPlayers(players: any[]): Promise<any> {
+  async importFromExcel(filePath: string) {
+    const players = parsePlayerData(filePath);
     let newCount = 0;
     let updatedCount = 0;
     let duplicateCount = 0;
@@ -67,25 +64,19 @@ export class PlayerService {
     const errors: string[] = [];
     const duplicateWarnings: string[] = [];
 
-    for (let index = 0; index < players.length; index++) {
-      const player = players[index];
-      
+    console.log(`Starting import of ${players.length} players`);
+
+    for (const [index, player] of players.entries()) {
       try {
-        // Look for exact match by name and position (FIXED: use proper where clause)
-        let existing = await this.prisma.player.findFirst({
-          where: {
-            name: player.name,
-            position: player.position
-          },
-          include: {
-            tier: true,
-            playerTags: {
-              include: {
-                tag: true
-              }
-            },
-            notes: true
-          }
+        if (!player.name || !player.position) {
+          errors.push(`Row ${index + 2}: Missing name or position`);
+          errorCount++;
+          continue;
+        }
+
+        // Check for exact match first
+        let existing = await prisma.player.findUnique({
+          where: { name_position: { name: player.name, position: player.position } }
         });
 
         // If no exact match, check for potential duplicates
@@ -93,11 +84,11 @@ export class PlayerService {
           const potentialDuplicates = await this.findPotentialDuplicates(player.name, player.position);
           
           if (potentialDuplicates.length > 0) {
-            // FIXED: Add null check for existing
+            // Use the first potential duplicate and add the new name as an alias
             existing = potentialDuplicates[0];
             const updatedAliases = [...new Set([...existing.aliases, player.name])];
             
-            await this.prisma.player.update({
+            await prisma.player.update({
               where: { id: existing.id },
               data: { aliases: updatedAliases }
             });
@@ -119,7 +110,7 @@ export class PlayerService {
             lastSeasonPoints: player.lastSeasonPoints,
           });
 
-          await this.prisma.player.update({
+          await prisma.player.update({
             where: { id: existing.id },
             data: updateData
           });
@@ -136,12 +127,13 @@ export class PlayerService {
             team: player.team,
             adp: player.adp,
             lastSeasonPoints: player.lastSeasonPoints,
+            userNotes: [],
+            customTags: [],
             aliases: [],
-            isDrafted: false,
-            dataSource: 'excel'
+            isDrafted: false
           });
 
-          await this.prisma.player.create({ 
+          await prisma.player.create({ 
             data: createData as any
           });
           newCount++;
@@ -172,7 +164,7 @@ export class PlayerService {
   async getPlayers(scoring: 'PPR' | 'Standard' = 'PPR', includeDrafted: boolean = true) {
     const whereClause = includeDrafted ? {} : { isDrafted: false };
     
-    const players = await this.prisma.player.findMany({
+    const players = await prisma.player.findMany({
       where: whereClause,
       include: {
         playerTags: {
@@ -193,7 +185,7 @@ export class PlayerService {
   }
 
   async getPlayerById(id: string): Promise<PlayerWithRelations | null> {
-    return this.prisma.player.findUnique({
+    return prisma.player.findUnique({
       where: { id },
       include: {
         playerTags: {
@@ -208,23 +200,7 @@ export class PlayerService {
   }
 
   async updatePlayer(id: string, data: Partial<Player>) {
-    return this.prisma.player.update({
-      where: { id },
-      data: removeUndefined(data),
-      include: {
-        playerTags: {
-          include: {
-            tag: true
-          }
-        },
-        notes: true,
-        tier: true
-      }
-    });
-  }
-
-  async updatePlayerQuick(id: string, data: Partial<Player>) {
-    return this.prisma.player.update({
+    return prisma.player.update({
       where: { id },
       data: removeUndefined(data),
       include: {
@@ -240,13 +216,13 @@ export class PlayerService {
   }
 
   async deletePlayer(id: string) {
-    return this.prisma.player.delete({
+    return prisma.player.delete({
       where: { id }
     });
   }
 
   async updatePlayerRanking(playerId: string, newRank: number) {
-    return this.prisma.player.update({
+    return prisma.player.update({
       where: { id: playerId },
       data: { customRank: newRank },
       include: {
@@ -262,7 +238,7 @@ export class PlayerService {
   }
 
   async toggleDraftStatus(playerId: string, isDrafted: boolean) {
-    return this.prisma.player.update({
+    return prisma.player.update({
       where: { id: playerId },
       data: { isDrafted },
       include: {
@@ -279,95 +255,96 @@ export class PlayerService {
 
   // Tag management
   async getTags() {
-    return this.prisma.tag.findMany({
+    return prisma.tag.findMany({
       orderBy: { name: 'asc' }
     });
   }
 
   async createTag(name: string, color: string) {
-    return this.prisma.tag.create({
+    return prisma.tag.create({
       data: { name, color }
     });
   }
 
   async updateTag(id: string, name?: string, color?: string) {
-    return this.prisma.tag.update({
+    return prisma.tag.update({
       where: { id },
       data: removeUndefined({ name, color })
     });
   }
 
   async deleteTag(id: string) {
-    return this.prisma.tag.delete({
+    return prisma.tag.delete({
       where: { id }
     });
   }
 
   async addTagToPlayer(playerId: string, tagId: string) {
-    return this.prisma.playerTag.create({
+    return prisma.playerTag.create({
       data: { playerId, tagId }
     });
   }
 
   async removeTagFromPlayer(playerId: string, tagId: string) {
-    return this.prisma.playerTag.deleteMany({
+    return prisma.playerTag.deleteMany({
       where: { playerId, tagId }
     });
   }
 
   // Note management
   async addNote(playerId: string, content: string, color: string = '#6B7280') {
-    return this.prisma.note.create({
+    return prisma.note.create({
       data: { playerId, content, color }
     });
   }
 
   async updateNote(noteId: string, content?: string, color?: string) {
-    return this.prisma.note.update({
+    return prisma.note.update({
       where: { id: noteId },
       data: removeUndefined({ content, color })
     });
   }
 
   async deleteNote(noteId: string) {
-    return this.prisma.note.delete({
+    return prisma.note.delete({
       where: { id: noteId }
     });
   }
 
   // Tier management
   async getTiers() {
-    return this.prisma.tier.findMany({
+    return prisma.tier.findMany({
       orderBy: { order: 'asc' }
     });
   }
 
   async createTier(name: string, color: string, order: number) {
-    return this.prisma.tier.create({
+    return prisma.tier.create({
       data: { name, color, order }
     });
   }
 
   async updateTier(id: string, name?: string, color?: string, order?: number) {
-    return this.prisma.tier.update({
+    return prisma.tier.update({
       where: { id },
       data: removeUndefined({ name, color, order })
     });
   }
 
   async deleteTier(id: string) {
-    await this.prisma.player.updateMany({
+    // Remove tier from all players first
+    await prisma.player.updateMany({
       where: { tierId: id },
       data: { tierId: null }
     });
     
-    return this.prisma.tier.delete({
+    return prisma.tier.delete({
       where: { id }
     });
   }
 
   async assignPlayerToTier(playerId: string, tierId: string | null) {
-    return this.prisma.player.update({
+    return prisma.player.update({
       where: { id: playerId },
       data: { tierId: tierId },
       include: {
@@ -382,45 +359,15 @@ export class PlayerService {
     });
   }
 
-  // Manual matching for import resolution
-  async resolveManualMatch(data: {
-    excelRowIndex: number;
-    selectedPlayerId: string;
-    excelData: Record<string, any>;
-    options: any;
-  }) {
-    try {
-      const updateData = removeUndefined({
-        ...data.excelData,
-        lastSyncAt: new Date()
-      });
-
-      return this.prisma.player.update({
-        where: { id: data.selectedPlayerId },
-        data: updateData,
-        include: {
-          playerTags: {
-            include: {
-              tag: true
-            }
-          },
-          notes: true,
-          tier: true
-        }
-      });
-    } catch (error: any) {
-      throw new Error(`Failed to resolve manual match: ${error.message}`);
-    }
-  }
-
   // Legacy methods for backward compatibility
   async updatePlayerNotes(playerId: string, notes: string[]) {
-    await this.prisma.note.deleteMany({
+    // Convert old string array to new Note objects
+    await prisma.note.deleteMany({
       where: { playerId }
     });
 
     if (notes.length > 0) {
-      await this.prisma.note.createMany({
+      await prisma.note.createMany({
         data: notes.map(content => ({
           playerId,
           content,
@@ -433,9 +380,10 @@ export class PlayerService {
   }
 
   async updatePlayerTags(playerId: string, tags: string[]) {
-    return this.prisma.player.update({
+    // This is kept for legacy compatibility but should use the new tag system
+    return prisma.player.update({
       where: { id: playerId },
-      data: { aliases: tags }
+      data: { customTags: tags }
     });
   }
 
@@ -515,19 +463,121 @@ export class PlayerService {
         
         try {
           column.eachCell?.({ includeEmpty: true }, (cell) => {
-            const columnLength = cell.value ? cell.value.toString().length : 0;
+            const columnLength = cell.value ? cell.value.toString().length : 10;
             if (columnLength > maxLength) {
               maxLength = columnLength;
             }
           });
           
-          column.width = Math.min(Math.max(maxLength + 2, 10), 50);
+          if (maxLength > 0) {
+            column.width = Math.min(maxLength + 2, 50);
+          }
         } catch (error) {
-          console.warn(`Failed to auto-size column ${index}:`, error);
+          console.warn(`Could not auto-fit column ${index}:`, error);
+          if (column.width === undefined) {
+            column.width = 15;
+          }
         }
       }
     });
 
-    return workbook;
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer;
   }
+
+  async importAndMergeFromExcel(filePath: string, mergeStrategy: 'update' | 'preserve' = 'update') {
+    // Enhanced version of the import method with duplicate detection
+    return this.importFromExcel(filePath);
+  }
+  // Add these methods to your existing PlayerService class in player.service.ts
+
+// Bulk tag operations
+async bulkAddTagToPlayers(playerIds: string[], tagId: string) {
+  const operations = playerIds.map(playerId => ({
+    playerId,
+    tagId
+  }));
+  
+  // Use createMany with skipDuplicates to avoid errors on existing tags
+  const result = await prisma.playerTag.createMany({
+    data: operations,
+    skipDuplicates: true
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Added tag to ${result.count} players`
+  };
+}
+
+async bulkRemoveTagFromPlayers(playerIds: string[], tagId: string) {
+  const result = await prisma.playerTag.deleteMany({
+    where: {
+      playerId: { in: playerIds },
+      tagId: tagId
+    }
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Removed tag from ${result.count} players`
+  };
+}
+
+// Bulk tier assignment
+async bulkAssignTier(playerIds: string[], tierId: string | null) {
+  const result = await prisma.player.updateMany({
+    where: {
+      id: { in: playerIds }
+    },
+    data: {
+      tierId: tierId
+    }
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Updated tier for ${result.count} players`
+  };
+}
+
+// Bulk draft status
+async bulkToggleDraftStatus(playerIds: string[], isDrafted: boolean) {
+  const result = await prisma.player.updateMany({
+    where: {
+      id: { in: playerIds }
+    },
+    data: {
+      isDrafted: isDrafted
+    }
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Updated draft status for ${result.count} players`
+  };
+}
+
+// Generic bulk update
+async bulkUpdatePlayers(playerIds: string[], updates: Partial<Player>) {
+  // Remove any fields that shouldn't be bulk updated
+  const { id, playerTags, notes, tier, ...safeUpdates } = updates as any;
+  
+  const result = await prisma.player.updateMany({
+    where: {
+      id: { in: playerIds }
+    },
+    data: safeUpdates
+  });
+  
+  return {
+    success: true,
+    count: result.count,
+    message: `Updated ${result.count} players`
+  };
+}
 }

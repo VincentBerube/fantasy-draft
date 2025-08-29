@@ -1,37 +1,49 @@
 // backend/src/app.ts
-import express from 'express';
-import cors from 'cors';
-import multer from 'multer';
-import playersRouter from './routes/players.route';
-import tiersRouter from './routes/tiers.route';
-import tagsRouter from './routes/tags.route';
-import sleeperRouter from './routes/sleeper.route';
+import * as express from 'express';
+import * as cors from 'cors';
+import playerRoutes from './routes/players.route';
 
-const app = express();
+const app: express.Express = express.default();
 
-// Middleware
-app.use(cors());
+// Enhanced CORS configuration
+app.use(cors.default({
+  origin: 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// File upload middleware
-const upload = multer({ dest: 'uploads/' });
+// Detailed request logging
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
 
-// Routes
-app.use('/api/players', playersRouter);
-app.use('/api/tiers', tiersRouter);
-app.use('/api/tags', tagsRouter);
-app.use('/api/sleeper', sleeperRouter);
+// Mount player routes
+app.use('/api/players', playerRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    services: {
-      database: 'connected',
-      sleeper: 'available'
-    }
-  });
+// Print all registered routes
+app._router.stack.forEach((middleware: any) => {
+  if (middleware.route) {
+    // Routes registered directly on the app
+    console.log(`${Object.keys(middleware.route.methods)[0].toUpperCase()} ${middleware.route.path}`);
+  } else if (middleware.name === 'router') {
+    // Routes registered on router instances
+    middleware.handle.stack.forEach((handler: any) => {
+      if (handler.route) {
+        console.log(`${Object.keys(handler.route.methods)[0].toUpperCase()} /api/players${handler.route.path}`);
+      }
+    });
+  }
+});
+
+// 404 handler
+app.use((req, res) => {
+  console.error(`404: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ error: 'Not found' });
 });
 
 export default app;

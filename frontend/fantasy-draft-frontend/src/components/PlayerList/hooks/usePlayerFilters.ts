@@ -1,4 +1,4 @@
-// frontend/fantasy-draft-frontend/src/components/PlayerList/hooks/usePlayerFilters.ts
+// src/components/PlayerList/hooks/usePlayerFilters.ts
 import { useState, useMemo } from 'react';
 import type { Player } from '../../../api/playerApi';
 
@@ -35,9 +35,7 @@ export function usePlayerFilters(players: Player[]) {
     }
 
     if (tagFilter !== 'ALL') {
-      // FIXED: Added null safety for playerTags
       filtered = filtered.filter(player => 
-        player.playerTags && player.playerTags.length > 0 && 
         player.playerTags.some(pt => pt.tag.id === tagFilter)
       );
     }
@@ -48,13 +46,8 @@ export function usePlayerFilters(players: Player[]) {
         player.name.toLowerCase().includes(term) ||
         player.position.toLowerCase().includes(term) ||
         player.team?.toLowerCase().includes(term) ||
-        (player.aliases && player.aliases.some(alias => alias.toLowerCase().includes(term)))
+        player.aliases.some(alias => alias.toLowerCase().includes(term))
       );
-    }
-
-    // Hide drafted players if requested
-    if (hideDrafted) {
-      filtered = filtered.filter(player => !player.isDrafted);
     }
 
     // Apply sorting
@@ -93,7 +86,7 @@ export function usePlayerFilters(players: Player[]) {
     });
 
     return filtered;
-  }, [players, positionFilter, teamFilter, tierFilter, tagFilter, searchTerm, sortBy, sortOrder, hideDrafted]);
+  }, [players, positionFilter, teamFilter, tierFilter, tagFilter, searchTerm, sortBy, sortOrder]);
 
   const handleSortChange = (newSortBy: string, newSortOrder: string) => {
     setSortBy(newSortBy as typeof sortBy);
